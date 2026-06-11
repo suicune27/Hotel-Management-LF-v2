@@ -807,6 +807,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking) return;
     setCheckoutRequesting(true);
     try {
+      // Create staff call notification
       await supabase.from('staff_calls').insert({
         booking_id: checkedInBooking.id,
         guest_id: effectiveProfile.id,
@@ -814,7 +815,38 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         reason: 'Guest requested checkout — please process check-out.',
         status: 'pending',
       });
-      setAlertState({ title: 'Checkout Requested', message: 'Front desk has been notified. Please wait at the lobby or in your room.' });
+
+      // Load billing data for invoice preview
+      const [chargesRes, paymentsRes, ordersRes] = await Promise.all([
+        supabase.from('booking_charges').select('*').eq('booking_id', checkedInBooking.id),
+        supabase.from('payments').select('*').eq('booking_id', checkedInBooking.id),
+        supabase.from('guest_orders').select('*, inventory_items(*)').eq('booking_id', checkedInBooking.id),
+      ]);
+
+      const charges = chargesRes.data || [];
+      const payments = paymentsRes.data || [];
+      const orders = ordersRes.data || [];
+
+      const roomRate = checkedInBooking.total_price;
+      const ordersTotal = orders.reduce((s, o) => s + Number(o.total_price), 0);
+      const extraCharges = charges.reduce((s, c) => s + Number(c.amount), 0);
+      const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+      const grandTotal = roomRate + ordersTotal + extraCharges;
+      const balance = grandTotal - totalPaid;
+
+      setAlertState({
+        title: 'Checkout Requested',
+        message: `Front desk has been notified!\n\nRoom Charges: ${settings.currencySymbol}${roomRate.toFixed(2)}\nOrders: ${settings.currencySymbol}${ordersTotal.toFixed(2)}\nExtras: ${settings.currencySymbol}${extraCharges.toFixed(2)}\nTotal: ${settings.currencySymbol}${grandTotal.toFixed(2)}\nPaid: ${settings.currencySymbol}${totalPaid.toFixed(2)}\nBalance: ${settings.currencySymbol}${balance.toFixed(2)}\n\nPlease wait at the lobby or in your room.`
+      });
+
+      // Also send a chat to front desk
+      await supabase.from('chat_messages').insert({
+        booking_id: checkedInBooking.id,
+        sender_id: chatSenderId,
+        sender_name: effectiveProfile.full_name || 'Guest',
+        sender_role: 'guest',
+        message: `🧾 Checkout requested. Total: ${settings.currencySymbol}${grandTotal.toFixed(2)}, Balance: ${settings.currencySymbol}${balance.toFixed(2)}`
+      });
     } catch (err: any) {
       setAlertState({ title: 'Request Failed', message: err.message });
     } finally {

@@ -1,7 +1,7 @@
-import { Activity, Building, BookOpen, UserCheck, Users, Package, Bell, Clock, MessageSquareText, Mail, Grid3X3, Layers, Settings, ChevronLeft, Percent } from 'lucide-react';
+import { Activity, Building, BookOpen, UserCheck, Users, Package, Bell, Clock, MessageSquareText, Mail, Grid3X3, Layers, Settings, ChevronLeft, Percent, SprayCan, FileSpreadsheet, Wrench, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 
-export type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions';
+export type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions' | 'housekeeping' | 'reports' | 'maintenance' | 'lost_found';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -23,6 +23,10 @@ const PRIMARY_TABS: { id: AdminTab; label: string; icon: any }[] = [
   { id: 'front_desk_chat', label: 'Chat', icon: MessageSquareText },
   { id: 'messages', label: 'Inbox', icon: Mail },
   { id: 'qr_codes', label: 'QR Codes', icon: Grid3X3 },
+  { id: 'housekeeping', label: 'Housekeeping', icon: SprayCan },
+  { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+  { id: 'lost_found', label: 'Lost & Found', icon: Search },
+  { id: 'reports', label: 'Reports', icon: FileSpreadsheet },
   { id: 'audit_logs', label: 'Logs', icon: Layers },
   { id: 'promotions', label: 'Promos', icon: Percent },
 ];

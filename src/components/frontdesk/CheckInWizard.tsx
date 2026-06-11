@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { BedDouble, Check, Loader2, Search, ChevronRight, ChevronLeft, User, Calendar, AlertTriangle } from 'lucide-react';
+import { BedDouble, Check, Loader2, Search, ChevronRight, ChevronLeft, User, Calendar, AlertTriangle, Tag, Percent } from 'lucide-react';
 
 import { TimePicker } from './TimePicker';
-import { Room, Booking } from '../../types';
+import { Room, Booking, PromoCode, RatePlan } from '../../types';
 import { supabase } from '../../lib/supabase';
 import {
   diffHours, todayStr, tomorrowStr, nowTime, toIso, to24h, timeToMin, minToTime12,
@@ -21,6 +21,8 @@ interface CheckInWizardProps {
   showSuccess: (msg: string) => void;
   userProfileId: string;
   logActivity: (action: string, details: string) => Promise<void>;
+  ratePlans?: RatePlan[];
+  promoCodes?: PromoCode[];
 }
 
 type Step = 'guest' | 'schedule' | 'confirm';
@@ -31,7 +33,7 @@ function fmtDate(iso: string): string {
   return `${m}/${d}/${y}`;
 }
 
-export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol, onClose, onBack, onComplete, showError, showSuccess, userProfileId, logActivity }: CheckInWizardProps) {
+export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol, onClose, onBack, onComplete, showError, showSuccess, userProfileId, logActivity, ratePlans, promoCodes }: CheckInWizardProps) {
   const [step, setStep] = useState<Step>(booking ? 'confirm' : 'guest');
   const [guestName, setGuestName] = useState(() => booking?.customers?.full_name || '');
   const [guestEmail, setGuestEmail] = useState(() => booking?.customers?.email || '');
@@ -42,6 +44,12 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
   const [roomBookings, setRoomBookings] = useState<BookingConflict[]>([]);
   const [bookingCheckLoading, setBookingCheckLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Rate Plan & Promo Code
+  const [selectedRatePlanId, setSelectedRatePlanId] = useState<string>('');
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState<PromoCode | null>(null);
+  const [promoCodeError, setPromoCodeError] = useState('');
 
   // Group Booking Variables
   const [isGroupBooking, setIsGroupBooking] = useState(false);
@@ -118,6 +126,17 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
     ? diffHours(booking.check_in_date, booking.check_in_time, booking.check_out_date, booking.check_out_time)
     : diffHours(ciDate, ciTime, coDate, coTime);
   const totalPrice = booking ? Number(booking.total_price) : Math.round(Number(room.price_per_hour) * stayHrs * 100) / 100;
+  const selectedRatePlan = ratePlans?.find(rp => rp.id === selectedRatePlanId);
+  const effectiveHourlyRate = selectedRatePlan ? selectedRatePlan.base_price : Number(room.price_per_hour);
+  const baseDiscounted = Math.round(effectiveHourlyRate * stayHrs * 100) / 100;
+  let promoDiscountAmt = 0;
+  if (appliedPromo) {
+    promoDiscountAmt = appliedPromo.discount_type === 'percentage'
+      ? Math.round(baseDiscounted * appliedPromo.discount_value / 100 * 100) / 100
+      : Math.min(appliedPromo.discount_value, baseDiscounted);
+  }
+  const finalTotalPrice = booking ? Number(booking.total_price) : Math.max(0, Math.round((baseDiscounted - promoDiscountAmt) * 100) / 100);
+  const appliedRatePlanDiscount = totalPrice - baseDiscounted;
   const minStay = room.min_stay_hours || 3;
   const rawConflicts = booking ? [] : getConflicts(checkInDate, checkOutDate, checkInTime, checkOutTime);
   // For walk-in, allow booking if guest arrival is > minStay hours from now (future walk-in)
@@ -158,7 +177,19 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
       const actualCiDate = isReservation || isFutureWalkin ? ciDate : toIso(todayStr());
       const actualCiTime = isReservation || isFutureWalkin ? ciTime : to24h(nowTime());
       const actualStayHrs = diffHours(actualCiDate, actualCiTime, coDate, coTime);
-      const actualTotal = Math.round(Number(room.price_per_hour) * Math.max(actualStayHrs, 0.5) * 100) / 100;
+      const actualBaseTotal = Math.round(Number(room.price_per_hour) * Math.max(actualStayHrs, 0.5) * 100) / 100;
+      const actualEffectiveTotal = Math.round(effectiveHourlyRate * Math.max(actualStayHrs, 0.5) * 100) / 100;
+      let actualPromoDiscount = 0;
+      if (appliedPromo) {
+        actualPromoDiscount = appliedPromo.discount_type === 'percentage'
+          ? Math.round(actualEffectiveTotal * appliedPromo.discount_value / 100 * 100) / 100
+          : Math.min(appliedPromo.discount_value, actualEffectiveTotal);
+      }
+      const actualTotal = Math.max(0, Math.round((actualEffectiveTotal - actualPromoDiscount) * 100) / 100);
+      const actualDiscountAmount = actualBaseTotal - actualTotal;
+      const ratePlanDiscountDesc = selectedRatePlan ? `${selectedRatePlan.name} (${currencySymbol}${Number(room.price_per_hour).toLocaleString()} → ${currencySymbol}${Number(selectedRatePlan.base_price).toLocaleString()}/hr)` : '';
+      const promoDesc = appliedPromo ? `${appliedPromo.code} (${appliedPromo.discount_type === 'percentage' ? `${appliedPromo.discount_value}%` : `${currencySymbol}${appliedPromo.discount_value}`})` : '';
+      const discountDesc = [ratePlanDiscountDesc, promoDesc].filter(Boolean).join(' + ');
 
       let customerId: string | null = null;
       const customerEmail = guestEmail.trim() || `guest-${Date.now()}@temp.local`;
@@ -201,6 +232,10 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
         check_in_time: actualCiTime,
         check_out_time: coTime,
         total_price: actualTotal,
+        discount_amount: actualDiscountAmount > 0 ? actualDiscountAmount : null,
+        discount_description: discountDesc || null,
+        rate_plan_id: selectedRatePlanId || null,
+        promo_code_id: appliedPromo?.id || null,
         group_id: groupId,
         status: isReservation ? 'confirmed' : 'checked-in',
         assigned_employee_id: userProfileId || null,
@@ -244,6 +279,11 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
 
           await supabase.from('rooms').update({ status: nextRoomStatus }).eq('id', matchedRoom.id);
         }
+      }
+
+      // Increment promo code usage count
+      if (appliedPromo) {
+        await supabase.from('promo_codes').update({ used_count: (appliedPromo.used_count || 0) + 1 }).eq('id', appliedPromo.id);
       }
 
       const { data: verify } = await supabase.from('rooms').select('status').eq('id', room.id).single();
@@ -491,10 +531,124 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
                 </div>
               </div>
 
+              {/* Rate Plan Selection */}
+              {!booking && ratePlans && ratePlans.length > 0 && (
+                <div className="border border-surface-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-surface-600">
+                    <Percent className="w-3.5 h-3.5" />
+                    Rate Plan
+                  </div>
+                  <select
+                    value={selectedRatePlanId}
+                    onChange={(e) => setSelectedRatePlanId(e.target.value)}
+                    className="input-field text-xs"
+                  >
+                    <option value="">Standard Rate ({currencySymbol}{Number(room.price_per_hour).toLocaleString()}/hr)</option>
+                    {ratePlans.filter(rp => rp.is_active && (!rp.room_type || rp.room_type === room.type)).map(rp => (
+                      <option key={rp.id} value={rp.id}>
+                        {rp.name} — {currencySymbol}{Number(rp.base_price).toLocaleString()}/hr
+                        {rp.base_price < Number(room.price_per_hour)
+                          ? ` (save ${Math.round((1 - rp.base_price / Number(room.price_per_hour)) * 100)}%)`
+                          : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedRatePlan && (
+                    <p className="text-[9px] text-surface-400">{selectedRatePlan.name} — {currencySymbol}{Number(selectedRatePlan.base_price).toLocaleString()}/hr</p>
+                  )}
+                </div>
+              )}
+
+              {/* Promo Code Input */}
+              {!booking && promoCodes && promoCodes.length > 0 && (
+                <div className="border border-surface-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-surface-600">
+                    <Tag className="w-3.5 h-3.5" />
+                    Promo Code
+                  </div>
+                  {!appliedPromo ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={promoCodeInput}
+                        onChange={(e) => { setPromoCodeInput(e.target.value.toUpperCase()); setPromoCodeError(''); }}
+                        placeholder="Enter code"
+                        className="input-field flex-1 text-xs"
+                      />
+                      <button
+                        onClick={() => {
+                          setPromoCodeError('');
+                          const code = promoCodeInput.trim().toUpperCase();
+                          if (!code) { setPromoCodeError('Enter a promo code'); return; }
+                          const found = promoCodes?.find(p => p.code.toUpperCase() === code);
+                          if (!found) { setPromoCodeError('Code not found'); return; }
+                          if (!found.is_active) { setPromoCodeError('This code is no longer active'); return; }
+                          const today = new Date().toISOString().slice(0, 10);
+                          if (found.valid_to && today > found.valid_to.slice(0, 10)) { setPromoCodeError('Code has expired'); return; }
+                          if (found.valid_from && today < found.valid_from.slice(0, 10)) { setPromoCodeError('Code is not yet valid'); return; }
+                          if (found.usage_limit != null && found.used_count >= found.usage_limit) { setPromoCodeError('Code has reached its usage limit'); return; }
+                          setAppliedPromo(found);
+                          setPromoCodeError('');
+                        }}
+                        className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-[10px] font-bold cursor-pointer transition-all flex-shrink-0"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                      <div>
+                        <span className="text-xs font-bold text-emerald-800">{appliedPromo.code}</span>
+                        <span className="text-[10px] text-emerald-600 ml-2">
+                          ({appliedPromo.discount_type === 'percentage' ? `${appliedPromo.discount_value}%` : `${currencySymbol}${appliedPromo.discount_value}`} off)
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => { setAppliedPromo(null); setPromoCodeInput(''); }}
+                        className="text-[10px] text-rose-600 hover:text-rose-800 font-semibold cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  {promoCodeError && (
+                    <p className="text-[9px] text-rose-500 flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" />{promoCodeError}</p>
+                  )}
+                </div>
+              )}
+
               <div className="bg-brand-50 rounded-xl p-3.5 space-y-2">
                 <div className="flex justify-between text-sm"><span className="text-surface-500">Duration</span><span className="font-semibold text-surface-800">{Math.round(stayHrs * 10) / 10} hours</span></div>
                 <div className="flex justify-between text-sm"><span className="text-surface-500">Rate</span><span className="font-semibold text-surface-800">{currencySymbol}{Number(room.price_per_hour).toLocaleString()}/hr</span></div>
-                <div className="border-t border-brand-200 pt-2 flex justify-between text-sm"><span className="font-bold text-surface-600">Estimated Total</span><span className="font-bold text-surface-900 text-base">{currencySymbol}{totalPrice.toLocaleString()}</span></div>
+                {selectedRatePlan && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-surface-500">Rate Plan ({selectedRatePlan.name})</span>
+                    <span className="font-semibold text-emerald-600">-{appliedRatePlanDiscount > 0 ? `${currencySymbol}${appliedRatePlanDiscount.toLocaleString()}` : currencySymbol}0</span>
+                  </div>
+                )}
+                {appliedPromo && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-surface-500">Promo Code ({appliedPromo.code})</span>
+                    <span className="font-semibold text-emerald-600">
+                      {appliedPromo.discount_type === 'percentage'
+                        ? `-${appliedPromo.discount_value}%`
+                        : `-${currencySymbol}${promoDiscountAmt.toLocaleString()}`}
+                    </span>
+                  </div>
+                )}
+                <div className="border-t border-brand-200 pt-2 flex justify-between text-sm">
+                  <span className="font-bold text-surface-600">
+                    {selectedRatePlan || appliedPromo ? 'Total After Discounts' : 'Estimated Total'}
+                  </span>
+                  <span className="font-bold text-surface-900 text-base">
+                    {selectedRatePlan || appliedPromo
+                      ? `${currencySymbol}${finalTotalPrice.toLocaleString()}`
+                      : `${currencySymbol}${totalPrice.toLocaleString()}`}
+                  </span>
+                </div>
+                {selectedRatePlan && (
+                  <div className="text-[9px] text-surface-400 text-center">{selectedRatePlan.name} applied — {currencySymbol}{Number(selectedRatePlan.base_price).toLocaleString()}/hr</div>
+                )}
                 {booking && (
                   <div className="text-[9px] text-surface-400 text-center pt-1">This booking was pre-reserved. Check-in will activate the existing reservation.</div>
                 )}

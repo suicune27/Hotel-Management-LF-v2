@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../../lib/supabase';
 import { ContactMessage } from '../../types';
-import { Mail, Eye, RefreshCw } from 'lucide-react';
+import { Mail, Eye, RefreshCw, Send } from 'lucide-react';
 import type { ToastMessage } from '../Toast';
 
 interface AdminMessagesTabProps {
@@ -9,6 +9,7 @@ interface AdminMessagesTabProps {
   setContactMessages: React.Dispatch<React.SetStateAction<ContactMessage[]>>;
   loadDatabase: () => Promise<void>;
   addToast: (type: ToastMessage['type'], title: string, message: string) => void;
+  triggerAlert?: (title: string, message: string) => void;
 }
 
 export default function AdminMessagesTab({
@@ -16,8 +17,12 @@ export default function AdminMessagesTab({
   setContactMessages,
   loadDatabase,
   addToast,
+  triggerAlert,
 }: AdminMessagesTabProps) {
   const [markingRead, setMarkingRead] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
 
   const handleMarkRead = async (msg: ContactMessage) => {
     setMarkingRead(msg.id);
@@ -38,6 +43,44 @@ export default function AdminMessagesTab({
       addToast('error', 'Error', err.message || 'Failed to mark as read');
     } finally {
       setMarkingRead(null);
+    }
+  };
+
+  const handleContactReply = async (contactId: string, email: string, name: string, subject: string | null) => {
+    if (!replyText.trim()) return;
+    setSendingReply(true);
+    try {
+      const now = new Date().toISOString();
+      await supabase.from('contact_messages').update({ admin_reply: replyText, replied_at: now }).eq('id', contactId);
+
+      try {
+        const url = supabaseUrl.replace(/\/rest\/v1\/?$/, '');
+        await fetch(`${url}/functions/v1/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` },
+          body: JSON.stringify({
+            to: email,
+            subject: `Re: ${subject || 'Your inquiry'}`,
+            html: `<p>Dear ${name},</p><p>${replyText.replace(/\n/g, '<br>')}</p><p>Best regards,<br>Hotel Management</p>`,
+            from_name: 'Hotel Management'
+          })
+        });
+      } catch (emailErr) {
+        // Email failure is non-critical
+      }
+
+      loadDatabase();
+      addToast('success', 'Reply Sent', `Reply sent to ${name}`);
+      setReplyingTo(null);
+      setReplyText('');
+    } catch (err: any) {
+      if (triggerAlert) {
+        triggerAlert('Error', err.message);
+      } else {
+        addToast('error', 'Error', err.message);
+      }
+    } finally {
+      setSendingReply(false);
     }
   };
 
@@ -90,22 +133,67 @@ export default function AdminMessagesTab({
                 <p className="text-xs font-semibold text-surface-700 mb-1">{msg.subject}</p>
               )}
               <p className="text-xs text-surface-600 leading-relaxed whitespace-pre-wrap">{msg.message}</p>
-              <div className="mt-3 flex items-center gap-2">
-                {!msg.read_at && (
+
+              {msg.admin_reply && (
+                <div className="mt-3 pl-3 border-l-2 border-brand-300 bg-brand-50/30 rounded-r-lg p-3">
+                  <p className="text-[10px] font-semibold text-brand-600 mb-1">Your Reply:</p>
+                  <p className="text-xs text-surface-600 whitespace-pre-wrap">{msg.admin_reply}</p>
+                  {msg.replied_at && (
+                    <p className="text-[9px] text-surface-400 mt-1">{new Date(msg.replied_at).toLocaleString()}</p>
+                  )}
+                </div>
+              )}
+
+              {replyingTo === msg.id ? (
+                <div className="mt-3 space-y-2">
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Type your reply..."
+                    rows={3}
+                    className="w-full text-xs p-2 border border-surface-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-brand-400"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleContactReply(msg.id, msg.email, msg.name, msg.subject)}
+                      disabled={sendingReply || !replyText.trim()}
+                      className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+                    >
+                      <Send className="w-3 h-3" /> {sendingReply ? 'Sending...' : 'Send Reply'}
+                    </button>
+                    <button
+                      onClick={() => { setReplyingTo(null); setReplyText(''); }}
+                      disabled={sendingReply}
+                      className="px-3 py-1.5 bg-surface-100 hover:bg-surface-200 text-surface-600 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 flex items-center gap-2">
+                  {!msg.read_at && (
+                    <button
+                      onClick={() => handleMarkRead(msg)}
+                      disabled={markingRead === msg.id}
+                      className="px-3 py-1.5 bg-surface-900 hover:bg-surface-800 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+                    >
+                      {markingRead === msg.id ? 'Marking...' : 'Mark Read'}
+                    </button>
+                  )}
+                  {msg.read_at && (
+                    <span className="text-[10px] text-surface-400 flex items-center gap-1">
+                      <Eye className="w-3 h-3" /> Read {new Date(msg.read_at).toLocaleString()}
+                    </span>
+                  )}
                   <button
-                    onClick={() => handleMarkRead(msg)}
-                    disabled={markingRead === msg.id}
-                    className="px-3 py-1.5 bg-surface-900 hover:bg-surface-800 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+                    onClick={() => { setReplyingTo(msg.id); setReplyText(''); }}
+                    className="px-3 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ml-auto"
                   >
-                    {markingRead === msg.id ? 'Marking...' : 'Mark Read'}
+                    Reply
                   </button>
-                )}
-                {msg.read_at && (
-                  <span className="text-[10px] text-surface-400 flex items-center gap-1">
-                    <Eye className="w-3 h-3" /> Read {new Date(msg.read_at).toLocaleString()}
-                  </span>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

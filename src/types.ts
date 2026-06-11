@@ -208,6 +208,8 @@ export interface ContactMessage {
   phone: string | null;
   subject: string | null;
   message: string;
+  admin_reply: string | null;
+  replied_at: string | null;
   read_at: string | null;
   created_at: string;
 }
@@ -459,6 +461,25 @@ export interface RatePlan {
   min_stay_hours: number;
   is_peak: boolean;
   is_active: boolean;
+  created_at: string;
+}
+
+export interface LostItem {
+  id: string;
+  item_name: string;
+  description: string;
+  category: string;
+  location_found: string;
+  found_by: string;
+  found_date: string;
+  photo_url: string | null;
+  status: 'unclaimed' | 'claimed' | 'returned' | 'disposed';
+  guest_name: string | null;
+  guest_email: string | null;
+  guest_phone: string | null;
+  claim_notes: string | null;
+  claimed_at: string | null;
+  returned_at: string | null;
   created_at: string;
 }
 

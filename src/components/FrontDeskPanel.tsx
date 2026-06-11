@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { Room, Profile, GuestOrder, ChatMessage, ChatTyping, StaffCall, Booking } from '../types';
+import { Room, Profile, GuestOrder, ChatMessage, ChatTyping, StaffCall, Booking, RatePlan, PromoCode } from '../types';
 import {
   Building, Check, X,
   Loader2, LogOut, Home, Search, Calendar, Bell, MessageSquareText,
@@ -38,14 +38,22 @@ interface FrontDeskPanelProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard') => void;
   userProfile: Profile | null;
   onLogout: () => void;
+  ratePlans?: RatePlan[];
+  promoCodes?: PromoCode[];
 }
 
-export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: FrontDeskPanelProps) {
+export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, ratePlans: propRatePlans, promoCodes: propPromoCodes }: FrontDeskPanelProps) {
   const [activeTab, setActiveTab] = useState<DeskTab>('rooms');
   const [loading, setLoading] = useState(true);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Rate Plans & Promo Codes (loaded internally if not provided via props)
+  const [internalRatePlans, setInternalRatePlans] = useState<RatePlan[]>([]);
+  const [internalPromoCodes, setInternalPromoCodes] = useState<PromoCode[]>([]);
+  const ratePlans = propRatePlans ?? internalRatePlans;
+  const promoCodes = propPromoCodes ?? internalPromoCodes;
 
   // Rooms
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -151,6 +159,16 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
   const [paymentReference, setPaymentReference] = useState('');
   const [invoiceDialog, setInvoiceDialog] = useState<{ booking: Booking; room: Room; charges: any[]; payments: any[]; promoCode?: any } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+
+  // POS Register
+  const [showPos, setShowPos] = useState(false);
+  const [posItems, setPosItems] = useState<any[]>([]);
+  const [posCart, setPosCart] = useState<{ item: any; qty: number }[]>([]);
+  const [posSearch, setPosSearch] = useState('');
+  const [posCategory, setPosCategory] = useState('');
+  const [posChargeMethod, setPosChargeMethod] = useState<'room' | 'cash'>('room');
+  const [posSelectedBooking, setPosSelectedBooking] = useState('');
+  const [posLoading, setPosLoading] = useState(false);
 
   // Orders
   const [guestOrders, setGuestOrders] = useState<GuestOrder[]>([]);
@@ -889,7 +907,9 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     const activeP = supabase.from('bookings').select('*, customers(*)').eq('status', 'checked-in');
     const cleanersP = supabase.from('users').select('*').eq('role', 'cleaner').order('full_name', { ascending: true });
     const extsP = supabase.from('stay_extensions').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }).limit(50);
-    const [roomsRes, ordersRes, chatRes, callsRes, expectedRes, activeRes, cleanersRes, extsRes] = await Promise.all([roomsP, ordersP, chatP, callsP, expectedP, activeP, cleanersP, extsP]);
+    const ratePlansP = !propRatePlans ? supabase.from('rate_plans').select('*').order('created_at', { ascending: false }) : Promise.resolve(null);
+    const promoCodesP = !propPromoCodes ? supabase.from('promo_codes').select('*').order('created_at', { ascending: false }) : Promise.resolve(null);
+    const [roomsRes, ordersRes, chatRes, callsRes, expectedRes, activeRes, cleanersRes, extsRes, ratePlansRes, promoCodesRes] = await Promise.all([roomsP, ordersP, chatP, callsP, expectedP, activeP, cleanersP, extsP, ratePlansP, promoCodesP]);
     if (roomsRes && !(roomsRes as any).error && (roomsRes as any).data) setRooms((roomsRes as any).data);
     if (ordersRes && !(ordersRes as any).error && (ordersRes as any).data) setGuestOrders((ordersRes as any).data);
     if (chatRes && !(chatRes as any).error && (chatRes as any).data) setChatMessages((chatRes as any).data);
@@ -903,6 +923,12 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     }
     if (extsRes && !(extsRes as any).error && (extsRes as any).data) {
       setStayExtensions((extsRes as any).data);
+    }
+    if (ratePlansRes && !(ratePlansRes as any).error && (ratePlansRes as any).data) {
+      setInternalRatePlans((ratePlansRes as any).data);
+    }
+    if (promoCodesRes && !(promoCodesRes as any).error && (promoCodesRes as any).data) {
+      setInternalPromoCodes((promoCodesRes as any).data);
     }
 
     // Load current user's time tracking status & logs
@@ -1618,8 +1644,146 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
   const isOvertimeActive = liveNetHours > 8;
   const overtimeLiveAmount = isOvertimeActive ? liveNetHours - 8 : 0;
 
+  // POS derived categories
+  const posCategories = useMemo(() => [...new Set(posItems.map((i: any) => i.menu_categories?.name).filter(Boolean))], [posItems]);
+
+  // POS Register: load items
+  useEffect(() => {
+    if (showPos) {
+      supabase.from('inventory_items').select('*, menu_categories(*)').then(({ data }) => {
+        if (data) setPosItems(data);
+      });
+    }
+  }, [showPos]);
+
+  // POS Cart functions
+  const addToCart = (item: any) => {
+    setPosCart(prev => {
+      const existing = prev.find(c => c.item.id === item.id);
+      if (existing) return prev.map(c => c.item.id === item.id ? { ...c, qty: c.qty + 1 } : c);
+      return [...prev, { item, qty: 1 }];
+    });
+  };
+  const updateQty = (itemId: string, delta: number) => {
+    setPosCart(prev => prev.map(c => c.item.id === itemId ? { ...c, qty: Math.max(1, c.qty + delta) } : c).filter(c => c.qty > 0));
+  };
+  const clearCart = () => setPosCart([]);
+
+  // POS Complete Sale handler
+  const handlePosComplete = async () => {
+    if (posCart.length === 0) return;
+    setPosLoading(true);
+    try {
+      for (const entry of posCart) {
+        const total = Number(entry.item.price) * entry.qty;
+        if (posChargeMethod === 'room' && posSelectedBooking) {
+          await supabase.from('booking_charges').insert({
+            booking_id: posSelectedBooking,
+            description: `POS: ${entry.item.name} x${entry.qty}`,
+            amount: total
+          });
+        } else {
+          await supabase.from('booking_charges').insert({
+            booking_id: null,
+            description: `Cash Sale: ${entry.item.name} x${entry.qty}`,
+            amount: total
+          });
+        }
+      }
+      const grandTotal = posCart.reduce((s, c) => s + Number(c.item.price) * c.qty, 0);
+      showSuccess(`Sale Complete — ${settings.currencySymbol}${grandTotal.toFixed(2)} processed.`);
+      clearCart();
+      setShowPos(false);
+    } catch (err: any) {
+      showError('Sale Failed', err.message || 'Failed to complete sale');
+    } finally {
+      setPosLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex">
+      {/* POS Register Panel */}
+      {showPos && (
+        <div className="fixed inset-0 bg-surface-900/30 backdrop-blur-sm z-50 flex justify-end">
+          <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col">
+            <div className="p-4 border-b border-surface-100 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-surface-900">POS Register</h2>
+              <button onClick={() => { setShowPos(false); clearCart(); }} className="p-1.5 text-surface-400 hover:text-surface-600 rounded-lg hover:bg-surface-100 cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <input type="text" placeholder="Search items..." value={posSearch} onChange={e => setPosSearch(e.target.value)}
+                className="w-full bg-surface-50 border border-surface-200 rounded-lg py-2 px-3 text-xs mb-4 focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+              <div className="flex gap-1.5 mb-4 flex-wrap">
+                <button onClick={() => setPosCategory('')} className={`px-2.5 py-1 text-[10px] font-bold rounded-full cursor-pointer ${!posCategory ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-500 hover:bg-surface-200'}`}>All</button>
+                {posCategories.map(cat => (
+                  <button key={cat} onClick={() => setPosCategory(cat)} className={`px-2.5 py-1 text-[10px] font-bold rounded-full cursor-pointer ${posCategory === cat ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-500 hover:bg-surface-200'}`}>{cat as string}</button>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {posItems
+                  .filter((item: any) => !posSearch || item.name.toLowerCase().includes(posSearch.toLowerCase()))
+                  .filter((item: any) => !posCategory || (item as any).menu_categories?.name === posCategory)
+                  .map((item: any) => (
+                    <button key={item.id} onClick={() => addToCart(item)}
+                      className="bg-surface-50 hover:bg-surface-100 border border-surface-100 rounded-xl p-3 text-left transition-all cursor-pointer">
+                      <div className="text-xs font-bold text-surface-900 truncate">{item.name}</div>
+                      <div className="text-[10px] text-surface-400 mt-0.5">{settings.currencySymbol}{Number(item.price).toFixed(2)}</div>
+                      <div className="text-[8px] text-surface-400 mt-0.5">Stock: {item.stock_quantity}</div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+            {posCart.length > 0 && (
+              <div className="border-t border-surface-100 p-4 bg-surface-50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-surface-900">Cart ({posCart.length} items)</span>
+                  <button onClick={clearCart} className="text-[10px] text-rose-500 font-bold cursor-pointer">Clear</button>
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1 mb-3">
+                  {posCart.map((entry: any) => (
+                    <div key={entry.item.id} className="flex items-center gap-2 bg-white rounded-lg px-2.5 py-1.5 border border-surface-100">
+                      <span className="flex-1 text-[11px] font-medium text-surface-700 truncate">{entry.item.name}</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => updateQty(entry.item.id, -1)} className="w-5 h-5 flex items-center justify-center bg-surface-100 rounded text-[10px] font-bold text-surface-600 hover:bg-surface-200 cursor-pointer">-</button>
+                        <span className="text-xs font-bold text-surface-900 w-5 text-center">{entry.qty}</span>
+                        <button onClick={() => updateQty(entry.item.id, 1)} className="w-5 h-5 flex items-center justify-center bg-surface-100 rounded text-[10px] font-bold text-surface-600 hover:bg-surface-200 cursor-pointer">+</button>
+                      </div>
+                      <span className="text-[11px] font-bold text-surface-900 w-16 text-right">{settings.currencySymbol}{(Number(entry.item.price) * entry.qty).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-3 mb-3">
+                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-surface-600 cursor-pointer">
+                    <input type="radio" name="posCharge" checked={posChargeMethod === 'room'} onChange={() => setPosChargeMethod('room')} className="accent-surface-900" /> Charge to Room
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-surface-600 cursor-pointer">
+                    <input type="radio" name="posCharge" checked={posChargeMethod === 'cash'} onChange={() => setPosChargeMethod('cash')} className="accent-surface-900" /> Cash Sale
+                  </label>
+                </div>
+                {posChargeMethod === 'room' && (
+                  <select value={posSelectedBooking} onChange={e => setPosSelectedBooking(e.target.value)}
+                    className="w-full bg-white border border-surface-200 rounded-lg py-2 px-3 text-xs mb-3 focus:outline-none cursor-pointer">
+                    <option value="">Select a room...</option>
+                    {activeBookingsRaw.filter((b: any) => b.status === 'checked-in').map((b: any) => (
+                      <option key={b.id} value={b.id}>#{(b as any).rooms?.room_number} - {(b as any).customers?.full_name}</option>
+                    ))}
+                  </select>
+                )}
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-surface-500 font-medium">Total</span>
+                  <span className="text-lg font-black text-surface-900">{settings.currencySymbol}{(posCart as any[]).reduce((s: any, c: any) => s + Number(c.item.price) * c.qty, 0).toFixed(2)}</span>
+                </div>
+                <button onClick={handlePosComplete} disabled={posLoading || (posChargeMethod === 'room' && !posSelectedBooking)}
+                  className="w-full py-2.5 bg-surface-900 text-white rounded-xl text-xs font-bold hover:bg-surface-800 disabled:opacity-40 transition-all cursor-pointer">
+                  {posLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : `Complete Sale`}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -1652,6 +1816,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                 <span className="text-[9px] text-surface-400">|</span>
                 <span className="text-[9px] text-surface-400">{clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
               </div>
+              <button onClick={() => setShowPos(true)} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-900 text-white rounded-lg text-[10px] font-bold hover:bg-surface-800 transition-all cursor-pointer">
+                <ShoppingCart className="w-3 h-3" />
+                <span>POS Register</span>
+              </button>
               <button onClick={() => setSearchOpen(true)} className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-50 border border-surface-200 rounded-lg text-[10px] text-surface-400 hover:text-surface-600 transition-all cursor-pointer">
                 <Search className="w-3 h-3" />
                 <span>Search</span>
@@ -2818,6 +2986,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
           showSuccess={showSuccess}
           userProfileId={userProfile?.id || ''}
           logActivity={logActivity}
+          ratePlans={ratePlans}
+          promoCodes={promoCodes}
         />
       )}
 

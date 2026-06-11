@@ -12,10 +12,10 @@ import NotificationBell, { type AppNotification } from './NotificationBell';
 import { exportToCSV, exportBookingsToPDF, exportRevenueToPDF, exportLogsToPDF, exportRoomsToPDF, exportOrdersToPDF, exportAttendanceToPDF } from '../lib/exportUtils';
 import { fileToBase64, isValidImageType } from '../lib/imageUpload';
 import { 
-  Building, BookOpen, UserCheck, Users, Activity, Sparkles, DollarSign, CreditCard,
+  BarChart3, Building, BookOpen, UserCheck, Users, Activity, Sparkles, DollarSign, CreditCard,
   Plus, Trash2, Check, X, Calendar, Edit3, Key, LogOut, Loader2, RefreshCw, Layers, Settings, AlertTriangle, Clock,
   Package, ShoppingCart, AlertCircle, Minus, Bell, MessageSquareText, Send, ChevronDown, ChevronUp, Mail, Search, ChevronLeft, ChevronRight, Phone, Eye, Filter, UserPlus, Tag, TrendingUp, Grid3X3, FileText, Download, ImageUp, ListChecks, Percent, ClipboardList,
-  Printer, FileSpreadsheet
+  Printer, FileSpreadsheet, SprayCan, Utensils, Zap
 } from 'lucide-react';
 import { getSettings, saveSettings, fetchSettingsFromSupabase, AppSettings } from '../lib/settings';
 import BrandBar from './BrandBar';
@@ -29,6 +29,10 @@ import AdminMessagesTab from './admin/AdminMessagesTab';
 import AdminQRCodesTab from './admin/AdminQRCodesTab';
 import AdminSettingsTab from './admin/AdminSettingsTab';
 import AdminPromotionsTab from './admin/AdminPromotionsTab';
+import AdminHousekeepingTab from './admin/AdminHousekeepingTab';
+import AdminReportsTab from './admin/AdminReportsTab';
+import AdminMaintenanceTab from './admin/AdminMaintenanceTab';
+import AdminLostFoundTab from './admin/AdminLostFoundTab';
 
 interface AdminDashboardProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard') => void;
@@ -37,7 +41,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions';
+type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions' | 'housekeeping' | 'reports' | 'maintenance' | 'lost_found';
 
 function generateAllDaySlots(): string[] {
   const slots: string[] = [];
@@ -1014,6 +1018,45 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       return checkIn >= from && checkIn <= to;
     });
   }, [bookings, reportDateFrom, reportDateTo]);
+
+  const weeklyOccupancy = useMemo(() => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const bookedToday = bookings.filter(b =>
+        b.check_in_date <= dateStr && b.check_out_date >= dateStr &&
+        (b.status === 'checked-in' || b.status === 'confirmed')
+      ).length;
+      const pct = rooms.length > 0 ? (bookedToday / rooms.length) * 100 : 0;
+      days.push({ label: dayLabel, date: dateStr, booked: bookedToday, total: rooms.length, percentage: pct });
+    }
+    return days;
+  }, [bookings, rooms]);
+
+  const averageOccupancy = useMemo(() => {
+    if (weeklyOccupancy.length === 0) return 0;
+    return weeklyOccupancy.reduce((s, d) => s + d.percentage, 0) / weeklyOccupancy.length;
+  }, [weeklyOccupancy]);
+
+  const topSellingItems = useMemo(() => {
+    const map = new Map<string, { name: string; category: string; qty: number; revenue: number }>();
+    guestOrders.forEach(o => {
+      const item = o.inventory_items;
+      const name = item?.name || 'Unknown';
+      const category = item?.menu_categories?.name || '';
+      const existing = map.get(name);
+      if (existing) {
+        existing.qty += o.quantity || 1;
+        existing.revenue += Number(o.total_price);
+      } else {
+        map.set(name, { name, category, qty: o.quantity || 1, revenue: Number(o.total_price) });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
+  }, [guestOrders]);
 
   // Rooms CRUD Handles
   const handleOpenRoomCreate = () => {
@@ -2424,6 +2467,91 @@ Confirm this change?`,
                     </div>
 
                   </div>
+
+                  {/* Weekly Occupancy */}
+                  <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4 text-brand-600" />
+                        <h3 className="text-xs font-bold text-surface-900">7-Day Occupancy</h3>
+                      </div>
+                      <span className="text-[10px] text-surface-400">{Math.round(averageOccupancy)}% avg</span>
+                    </div>
+                    <div className="flex items-end gap-2 h-24">
+                      {weeklyOccupancy.map((day, i) => {
+                        const height = Math.max(4, day.percentage);
+                        const color = day.percentage >= 75 ? 'bg-emerald-400' : day.percentage >= 50 ? 'bg-amber-400' : 'bg-rose-400';
+                        return (
+                          <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                            <span className="text-[8px] text-surface-400 font-medium">{Math.round(day.percentage)}%</span>
+                            <div className="w-full rounded-md relative" style={{ height: `${height}%`, maxHeight: '100%' }}>
+                              <div className={`absolute bottom-0 w-full rounded-md ${color} transition-all duration-500`} style={{ height: `${height}%` }} />
+                            </div>
+                            <span className="text-[7px] text-surface-400 font-medium">{day.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Top Selling Items */}
+                  <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-brand-600" />
+                        <h3 className="text-xs font-bold text-surface-900">Top Selling Items</h3>
+                      </div>
+                      <Utensils className="w-3.5 h-3.5 text-surface-300" />
+                    </div>
+                    {topSellingItems.length === 0 ? (
+                      <p className="text-[11px] text-surface-400 text-center py-6">No orders yet</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {topSellingItems.slice(0, 5).map((item, i) => (
+                          <div key={item.name || i} className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-brand-400" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-surface-800 truncate">{item.name}</span>
+                                <span className="text-[10px] text-surface-500 font-medium">x{item.qty}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] text-surface-400">{item.category || '—'}</span>
+                                <span className="text-[10px] font-bold text-surface-600">{settings.currencySymbol}{item.revenue.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Zap className="w-4 h-4 text-brand-600" />
+                      <h3 className="text-xs font-bold text-surface-900">Quick Actions</h3>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <button onClick={() => setActiveTab('bookings')} className="p-3 bg-surface-50 hover:bg-surface-100 text-surface-700 rounded-xl text-[11px] font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer">
+                        <Calendar className="w-5 h-5" />
+                        <span>New Booking</span>
+                      </button>
+                      <button onClick={() => setActiveTab('housekeeping')} className="p-3 bg-surface-50 hover:bg-surface-100 text-surface-700 rounded-xl text-[11px] font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer">
+                        <SprayCan className="w-5 h-5" />
+                        <span>Housekeeping</span>
+                      </button>
+                      <button onClick={() => setActiveTab('reports')} className="p-3 bg-surface-50 hover:bg-surface-100 text-surface-700 rounded-xl text-[11px] font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer">
+                        <FileSpreadsheet className="w-5 h-5" />
+                        <span>Reports</span>
+                      </button>
+                      <button onClick={() => setActiveTab('inventory')} className="p-3 bg-surface-50 hover:bg-surface-100 text-surface-700 rounded-xl text-[11px] font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer">
+                        <Package className="w-5 h-5" />
+                        <span>Inventory</span>
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
               )}
 
@@ -2772,49 +2900,6 @@ Confirm this change?`,
                 </div>
               )}
 
-              {activeTab === 'rooms' && (
-
-              <div className="bg-white rounded-2xl border border-surface-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-surface-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ListChecks className="w-4 h-4 text-brand-600" />
-                    <h3 className="text-xs font-bold text-surface-900">Housekeeping Queue</h3>
-                    <span className="px-2 py-0.5 bg-surface-100 text-surface-500 rounded-full text-[9px] font-medium">{housekeepingTasks.length} tasks</span>
-                  </div>
-                  <button onClick={() => refreshTable('housekeeping_tasks')} className="p-1.5 text-surface-400 hover:text-surface-600 rounded-lg hover:bg-surface-50 cursor-pointer" title="Refresh"><RefreshCw className="w-3.5 h-3.5" /></button>
-                </div>
-                <div className="p-4">
-                  {housekeepingTasks.length === 0 ? (
-                    <div className="text-center py-8 text-surface-400 text-xs">
-                      <ListChecks className="w-8 h-8 mx-auto mb-2 text-surface-300" />
-                      <p>No housekeeping tasks. Add tasks via the database or mobile app.</p>
-                    </div>
-                  ) : (
-                    <div className="grid gap-2 max-h-64 overflow-y-auto">
-                      {housekeepingTasks.slice(0, 10).map(task => {
-                        const statusColor = task.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : task.status === 'in_progress' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-surface-50 text-surface-500 border-surface-200';
-                        return (
-                          <div key={task.id} className="flex items-center gap-3 bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-surface-900 truncate">{task.task_type.replace(/_/g, ' ')}</span>
-                                {task.rooms && <span className="text-[9px] text-surface-400 font-mono">Room {task.rooms.room_number}</span>}
-                                {(task.priority === 'urgent' || task.priority === 'high') && <span className="px-1 py-0.5 bg-rose-50 text-rose-600 rounded text-[8px] font-bold uppercase">{task.priority}</span>}
-                              </div>
-                              {task.notes && <p className="text-[9px] text-surface-400 truncate mt-0.5">{task.notes}</p>}
-                              {task.users && <p className="text-[9px] text-surface-400 mt-0.5">Assigned: {task.users.full_name}</p>}
-                            </div>
-                            <span className={`px-2 py-0.5 text-[8px] font-bold uppercase rounded-full border ${statusColor}`}>{task.status.replace(/_/g, ' ')}</span>
-                          </div>
-                        );
-                      })}
-                      {housekeepingTasks.length > 10 && <div className="text-center text-[10px] text-surface-400 pt-2">+{housekeepingTasks.length - 10} more tasks</div>}
-                    </div>
-                  )}
-                </div>
-              </div>
-              )}
-
               {/* Incidents Section */}
               {activeTab === 'rooms' && (
               <div className="bg-white rounded-2xl border border-surface-100 shadow-sm overflow-hidden">
@@ -2874,7 +2959,32 @@ Confirm this change?`,
                               <td className="p-3">
                                 <div className="flex items-center gap-1">
                                   {nextStatus(inc.status) && (
-                                    <button onClick={async () => { try { await supabase.from('incidents').update({ status: nextStatus(inc.status), resolved_at: nextStatus(inc.status) === 'closed' ? new Date().toISOString() : null }).eq('id', inc.id); refreshTable('incidents'); addToast('success', 'Status Updated', `Incident moved to "${nextStatus(inc.status)}".`); } catch (err: any) { triggerAlert('Error', err.message); } }} className="px-1.5 py-0.5 bg-surface-100 hover:bg-surface-200 text-surface-600 rounded text-[8px] font-bold cursor-pointer whitespace-nowrap">{nextStatus(inc.status)}</button>
+                                    <button onClick={async () => {
+                                      try {
+                                        const newStatus = nextStatus(inc.status);
+                                        if (!newStatus) return;
+                                        const { data: fullInc } = await supabase.from('incidents').select('*').eq('id', inc.id).single();
+                                        await supabase.from('incidents').update({
+                                          status: newStatus,
+                                          resolved_at: newStatus === 'closed' ? new Date().toISOString() : null
+                                        }).eq('id', inc.id);
+                                        if (newStatus === 'billed' && fullInc?.billed_to_guest && fullInc?.booking_id) {
+                                          await supabase.from('booking_charges').insert({
+                                            booking_id: fullInc.booking_id,
+                                            description: `Incident: ${fullInc.incident_type} - ${fullInc.description.slice(0, 100)}`,
+                                            amount: fullInc.cost
+                                          });
+                                          await supabase.from('activity_logs').insert({
+                                            user_id: userProfile?.id,
+                                            user_name: userProfile?.full_name || 'Admin',
+                                            action: 'Incident Billed',
+                                            details: `${settings.currencySymbol}${fullInc.cost} charge created for ${fullInc.incident_type} incident`
+                                          });
+                                        }
+                                        refreshTable('incidents');
+                                        addToast('success', 'Status Updated', `Incident moved to "${newStatus}".`);
+                                      } catch (err: any) { triggerAlert('Error', err.message); }
+                                    }} className="px-1.5 py-0.5 bg-surface-100 hover:bg-surface-200 text-surface-600 rounded text-[8px] font-bold cursor-pointer whitespace-nowrap">{nextStatus(inc.status)}</button>
                                   )}
                                   {inc.status !== 'closed' && (
                                     <button onClick={() => triggerConfirm('Close Incident', 'Close this incident without further action?', async () => { try { await supabase.from('incidents').update({ status: 'closed', resolved_at: new Date().toISOString() }).eq('id', inc.id); refreshTable('incidents'); } catch (err: any) { triggerAlert('Error', err.message); } })} className="px-1.5 py-0.5 text-surface-400 hover:text-rose-600 rounded text-[8px] font-bold cursor-pointer">Close</button>
@@ -5196,6 +5306,7 @@ Confirm this change?`,
                               setContactMessages={setContactMessages}
                               loadDatabase={loadDatabase}
                               addToast={addToast}
+                              triggerAlert={triggerAlert}
                             />
               )}
 
@@ -5225,7 +5336,63 @@ Confirm this change?`,
                 />
               )}
 
-              {/* TABS 14: RESORT SETTINGS SETUP */}
+              {/* TABS 14: HOUSEKEEPING MANAGEMENT */}
+              {activeTab === 'housekeeping' && (
+                <AdminHousekeepingTab
+                  housekeepingTasks={housekeepingTasks}
+                  rooms={rooms}
+                  employees={employees}
+                  userProfile={userProfile}
+                  settings={settings}
+                  addToast={addToast}
+                  refreshTable={refreshTable}
+                  triggerConfirm={triggerConfirm}
+                  triggerAlert={triggerAlert}
+                />
+              )}
+
+              {/* TABS 15: ENHANCED REPORTS & EXPORT */}
+              {activeTab === 'reports' && (
+                <AdminReportsTab
+                  bookings={bookings}
+                  rooms={rooms}
+                  customers={customers}
+                  orders={guestOrders}
+                  payments={[]}
+                  housekeepingTasks={housekeepingTasks}
+                  incidents={incidents}
+                  settings={settings}
+                  addToast={addToast}
+                />
+              )}
+
+              {/* TABS 16: MAINTENANCE MANAGEMENT */}
+              {activeTab === 'maintenance' && (
+                <AdminMaintenanceTab
+                  rooms={rooms}
+                  employees={employees}
+                  housekeepingTasks={housekeepingTasks}
+                  userProfile={userProfile}
+                  settings={settings}
+                  addToast={addToast}
+                  refreshTable={refreshTable}
+                  triggerConfirm={triggerConfirm}
+                  triggerAlert={triggerAlert}
+                />
+              )}
+
+              {/* TABS 17: LOST & FOUND */}
+              {activeTab === 'lost_found' && (
+                <AdminLostFoundTab
+                  settings={settings}
+                  addToast={addToast}
+                  refreshTable={refreshTable}
+                  triggerConfirm={triggerConfirm}
+                  triggerAlert={triggerAlert}
+                />
+              )}
+
+              {/* TABS 18: RESORT SETTINGS SETUP */}
                             {activeTab === 'settings' && (
                 <AdminSettingsTab
                               settings={settings}

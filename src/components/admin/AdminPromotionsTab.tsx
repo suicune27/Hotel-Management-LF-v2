@@ -313,6 +313,17 @@ export default function AdminPromotionsTab({
     }
   };
 
+  const handleNotifyWaitlist = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('waitlist-notify', {});
+      if (error) throw error;
+      addToast('success', 'Waitlist Notified', `${data?.notified || 0} guests notified about available rooms.`);
+      await refreshTable('waitlist');
+    } catch (err: any) {
+      addToast('error', 'Notification Failed', err.message);
+    }
+  };
+
   const openWaitlistModal = (entry: WaitlistEntry | null) => {
     if (entry) {
       setSelectedWaitlist(entry);
@@ -572,7 +583,7 @@ export default function AdminPromotionsTab({
               <ClipboardList className="w-4 h-4 text-surface-500" />
               <h3 className="text-xs font-bold text-surface-800 uppercase tracking-wider">Waitlist</h3>
             </div>
-            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-surface-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
@@ -583,6 +594,12 @@ export default function AdminPromotionsTab({
                   className="w-40 pl-7 pr-2 py-1.5 bg-surface-50 border border-surface-200 rounded-lg text-[10px] focus:outline-none focus:border-brand-500"
                 />
               </div>
+              <button
+                onClick={handleNotifyWaitlist}
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-[10px] font-bold cursor-pointer flex items-center gap-1"
+              >
+                <Bell className="w-3 h-3" /> Notify Waitlist
+              </button>
               <button
                 onClick={() => openWaitlistModal(null)}
                 className="px-3 py-1.5 bg-surface-900 hover:bg-surface-800 text-white rounded-lg text-[10px] font-bold cursor-pointer flex items-center gap-1"

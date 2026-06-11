@@ -910,3 +910,97 @@ CREATE INDEX IF NOT EXISTS idx_payroll_components_entry ON public.payroll_compon
 CREATE INDEX IF NOT EXISTS idx_payroll_approvals_period ON public.payroll_approvals(payroll_period_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_user_dates ON public.leave_requests(user_id, start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_payroll_notifications_user_read ON public.payroll_notifications(user_id, read_at);
+
+-- ==========================================
+-- 15. CUSTOMER LOYALTY ENHANCEMENTS
+-- ==========================================
+
+-- Add computed columns for guest loyalty
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS total_visits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS total_spent NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS last_visit TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS preferences TEXT;
+
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS rate_plan_id UUID REFERENCES public.rate_plans(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE FUNCTION public.compute_customer_stats()
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE public.customers c
+  SET
+    total_visits = (SELECT COUNT(*) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out'),
+    total_spent = (SELECT COALESCE(SUM(b.total_price), 0) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out'),
+    last_visit = (SELECT MAX(b.check_out_date::timestamp + b.check_out_time::time) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out')
+  WHERE c.id = NEW.customer_id OR c.id = OLD.customer_id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trigger_compute_customer_stats ON public.bookings;
+CREATE TRIGGER trigger_compute_customer_stats
+  AFTER INSERT OR UPDATE OF status ON public.bookings
+  FOR EACH ROW
+  WHEN (NEW.status IN ('checked-out', 'cancelled') OR OLD.status IN ('checked-out', 'cancelled'))
+  EXECUTE FUNCTION public.compute_customer_stats();
+
+CREATE OR REPLACE VIEW public.customer_loyalty_tiers AS
+SELECT
+  c.id,
+  c.full_name,
+  c.email,
+  c.total_visits,
+  c.total_spent,
+  c.last_visit,
+  CASE
+    WHEN c.total_visits >= 20 OR c.total_spent >= 10000 THEN 'Diamond'
+    WHEN c.total_visits >= 10 OR c.total_spent >= 5000 THEN 'Platinum'
+    WHEN c.total_visits >= 5 OR c.total_spent >= 2000 THEN 'Gold'
+    WHEN c.total_visits >= 2 OR c.total_spent >= 500 THEN 'Silver'
+    ELSE 'Bronze'
+  END AS loyalty_tier,
+  CASE
+    WHEN c.total_visits >= 20 OR c.total_spent >= 10000 THEN 25
+    WHEN c.total_visits >= 10 OR c.total_spent >= 5000 THEN 15
+    WHEN c.total_visits >= 5 OR c.total_spent >= 2000 THEN 10
+    WHEN c.total_visits >= 2 OR c.total_spent >= 500 THEN 5
+    ELSE 0
+  END AS discount_percent
+FROM public.customers c
+WHERE c.total_visits > 0 OR c.total_spent > 0;
+
+-- ==========================================
+-- 16. LOST & FOUND
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS public.lost_found_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    item_name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('electronics', 'clothing', 'jewelry', 'documents', 'bags', 'keys', 'toys', 'other')),
+    location_found TEXT NOT NULL DEFAULT '',
+    found_by TEXT NOT NULL DEFAULT '',
+    found_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    photo_url TEXT,
+    status TEXT NOT NULL DEFAULT 'unclaimed' CHECK (status IN ('unclaimed', 'claimed', 'returned', 'disposed')),
+    guest_name TEXT,
+    guest_email TEXT,
+    guest_phone TEXT,
+    claim_notes TEXT,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    returned_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.lost_found_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow all authenticated users to read lost_found_items"
+  ON public.lost_found_items FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Allow all authenticated users to insert lost_found_items"
+  ON public.lost_found_items FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Allow all authenticated users to update lost_found_items"
+  ON public.lost_found_items FOR UPDATE TO authenticated USING (true);
+
+CREATE INDEX IF NOT EXISTS idx_lost_found_status ON public.lost_found_items(status);
+CREATE INDEX IF NOT EXISTS idx_lost_found_category ON public.lost_found_items(category);

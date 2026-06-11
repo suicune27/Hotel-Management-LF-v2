@@ -1,0 +1,6 @@
+{
+  "name": "Hotel Management",
+  "description": "A luxury hotel web application featuring a public room booking landing page, secure authentication, and role-based admin and employee management dashboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

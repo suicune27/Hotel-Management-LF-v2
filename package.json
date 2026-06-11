@@ -1,0 +1,66 @@
+{
+  "name": "link-fortress-it-solutions",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev:local": "node scripts/start-local.mjs",
+    "serve:local": "node scripts/serve-local.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && npx electron .\"",
+    "electron:build": "npm run build && npx electron-builder",
+    "electron:start": "npx electron .",
+    "clean": "npx rimraf dist server.js",
+    "start": "npm run electron:dev",
+    "lint": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.linkfortress.solutions",
+    "productName": "Link Fortress IT Solutions",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": null
+    }
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^10.0.3",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.15.2",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3",
+    "wait-on": "^9.0.10"
+  }
+}

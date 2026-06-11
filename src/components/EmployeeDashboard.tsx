@@ -609,8 +609,8 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
 
       <div className="flex-1">
         {/* Tabs */}
-        <div className="bg-white border-b border-surface-200 shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 lg:px-6 flex gap-1 sm:gap-2 text-xs font-semibold py-2 overflow-x-auto">
+        <div className="bg-white border-b border-surface-150 shadow-xs select-none">
+          <div className="max-w-7xl mx-auto px-4 lg:px-6 flex gap-1 sm:gap-2 text-xs font-semibold py-2.5 overflow-x-auto">
             {tabs.map((tab) => {
               const TabIcon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -618,14 +618,22 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg cursor-pointer transition-all whitespace-nowrap ${
+                  className={`relative flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl cursor-pointer transition-colors whitespace-nowrap outline-none ${
                     isActive
-                      ? 'bg-surface-900 text-white shadow-sm'
-                      : 'text-surface-500 hover:bg-surface-50:bg-surface-800 hover:text-surface-800:text-surface-200'
+                      ? 'text-white font-bold'
+                      : 'text-surface-500 hover:text-surface-850 hover:bg-surface-50'
                   }`}
                 >
-                  <TabIcon className="w-3.5 h-3.5" />
-                  <span>{tab.label}</span>
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeStaffTab"
+                      className="absolute inset-0 bg-surface-900 rounded-xl shadow-md"
+                      transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                      style={{ zIndex: 0 }}
+                    />
+                  )}
+                  <TabIcon className="w-3.5 h-3.5 relative z-10" />
+                  <span className="relative z-10">{tab.label}</span>
                 </button>
               );
             })}
@@ -639,7 +647,12 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
               <p className="text-xs text-surface-500 font-mono">Synchronizing workspace...</p>
             </div>
           ) : (
-            <div>
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            >
               {/* DUTIES TAB */}
               {activeTab === 'duties' && (
                 <div className="space-y-6">
@@ -1518,7 +1531,7 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
                   )}
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
         </main>
       </div>

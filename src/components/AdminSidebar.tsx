@@ -1,4 +1,5 @@
 import { Activity, Building, BookOpen, UserCheck, Users, Package, Bell, Clock, MessageSquareText, Mail, Grid3X3, Layers, Settings, ChevronLeft } from 'lucide-react';
+import { motion } from 'motion/react';
 
 export type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings';
 
@@ -31,23 +32,26 @@ const BOTTOM_TABS: { id: AdminTab; label: string; icon: any }[] = [
 
 export default function AdminSidebar({ activeTab, onTabChange, badges, collapsed, onToggleCollapse }: AdminSidebarProps) {
   return (
-    <nav className={`bg-white border-r border-surface-200 flex flex-col transition-all duration-200 ${collapsed ? 'w-16' : 'w-56'} flex-shrink-0`}>
-      <div className="p-3 border-b border-surface-100 flex items-center justify-between min-h-[53px]">
+    <nav className={`bg-white border-r border-surface-150 flex flex-col transition-all duration-300 ease-out ${collapsed ? 'w-16' : 'w-56'} flex-shrink-0 select-none`}>
+      <div className="p-3.5 border-b border-surface-100 flex items-center justify-between min-h-[57px]">
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-gradient-to-br from-brand-500 to-brand-700 text-white rounded-lg flex items-center justify-center text-xs font-bold font-mono">GH</div>
-            <span className="text-xs font-bold text-surface-900">Admin Panel</span>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-gradient-to-tr from-brand-600 to-indigo-500 text-white rounded-xl flex items-center justify-center text-xs font-bold font-mono shadow-md shadow-brand-500/10">GH</div>
+            <div>
+              <span className="text-xs font-extrabold text-surface-900 block tracking-tight leading-none">Admin Portal</span>
+              <span className="text-[9px] font-bold text-brand-500 uppercase tracking-widest block mt-0.5">Control Center</span>
+            </div>
           </div>
         )}
         <button
           onClick={onToggleCollapse}
-          className="p-1.5 text-surface-400 hover:text-surface-600 hover:bg-surface-100 rounded-lg transition-colors cursor-pointer ml-auto"
+          className={`p-1.5 text-surface-400 hover:text-surface-700 hover:bg-surface-50 rounded-xl transition-all cursor-pointer ${collapsed ? 'mx-auto' : 'ml-auto'}`}
         >
-          <ChevronLeft className={`w-4 h-4 transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+          <ChevronLeft className={`w-4 h-4 transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
-      <div className="flex-1 py-3 space-y-1 px-2 overflow-y-auto">
+      <div className="flex-1 py-4 space-y-1 px-2.5 overflow-y-auto">
         {PRIMARY_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -56,28 +60,37 @@ export default function AdminSidebar({ activeTab, onTabChange, badges, collapsed
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer outline-none ${
                 isActive
-                  ? 'bg-surface-900 text-white shadow-sm'
-                  : 'text-surface-500 hover:bg-surface-100 hover:text-surface-700'
+                  ? 'text-white'
+                  : 'text-surface-500 hover:text-surface-800'
               }`}
               title={collapsed ? tab.label : undefined}
             >
-              <div className="relative flex-shrink-0">
-                <Icon className="w-4 h-4" />
+              {isActive && (
+                <motion.div
+                  layoutId="activeAdminTab"
+                  className="absolute inset-0 bg-surface-900 rounded-xl shadow-md"
+                  transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                  style={{ zIndex: 0 }}
+                />
+              )}
+              
+              <div className="relative flex-shrink-0 z-10 flex items-center justify-center">
+                <Icon className={`w-4 h-4 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-105'}`} />
                 {badge > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center leading-none">
+                  <span className="absolute -top-2 -right-2 min-w-[16px] h-4 bg-rose-500 text-white text-[8px] font-black rounded-full flex items-center justify-center px-1 border border-white shadow-sm leading-none z-20">
                     {badge > 9 ? '9+' : badge}
                   </span>
                 )}
               </div>
-              {!collapsed && <span className="truncate">{tab.label}</span>}
+              {!collapsed && <span className="truncate relative z-10">{tab.label}</span>}
             </button>
           );
         })}
       </div>
 
-      <div className="p-2 border-t border-surface-100">
+      <div className="p-2.5 border-t border-surface-100">
         {BOTTOM_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -85,15 +98,23 @@ export default function AdminSidebar({ activeTab, onTabChange, badges, collapsed
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer outline-none ${
                 isActive
-                  ? 'bg-surface-900 text-white shadow-sm'
-                  : 'text-surface-400 hover:bg-surface-100 hover:text-surface-600'
+                  ? 'text-white'
+                  : 'text-surface-500 hover:text-surface-800'
               }`}
               title={collapsed ? tab.label : undefined}
             >
-              <Icon className="w-4 h-4 flex-shrink-0" />
-              {!collapsed && <span>{tab.label}</span>}
+              {isActive && (
+                <motion.div
+                  layoutId="activeAdminTab"
+                  className="absolute inset-0 bg-surface-900 rounded-xl shadow-md"
+                  transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                  style={{ zIndex: 0 }}
+                />
+              )}
+              <Icon className="w-4 h-4 flex-shrink-0 relative z-10" />
+              {!collapsed && <span className="relative z-10">{tab.label}</span>}
             </button>
           );
         })}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getSettings, saveSettings, fetchSettingsFromSupabase, AppSettings, hexToRgb } from './settings';
+import { supabase } from './supabase';
 
 export function useAppSettings() {
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
@@ -16,7 +17,26 @@ export function useAppSettings() {
       applyColorScheme(s);
     };
     window.addEventListener('hotel-settings-updated', handler);
-    return () => window.removeEventListener('hotel-settings-updated', handler);
+
+    // Subscribe to realtime database changes for hotel settings
+    const channel = supabase
+      .channel('realtime-hotel-settings')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'hotel_settings' },
+        async (payload) => {
+          const fresh = await fetchSettingsFromSupabase();
+          setSettings(fresh);
+          applyColorScheme(fresh);
+          window.dispatchEvent(new Event('hotel-settings-updated'));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      window.removeEventListener('hotel-settings-updated', handler);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const updateSettings = useCallback(async (updated: AppSettings) => {

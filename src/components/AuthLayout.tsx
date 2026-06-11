@@ -130,7 +130,7 @@ export default function AuthLayout({ onNavigate, onAuthSuccess }: AuthLayoutProp
 
         {/* Footer info */}
         <div className="relative z-10 text-[10px] font-mono text-surface-400">
-          SECURE ENCRYPTION ENFORCED • POWERED BY SUPABASE AUTH & RLS
+          SECURE ENCRYPTION ENFORCED • Link Fortress IT Solutions
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { motion, AnimatePresence } from 'motion/react';
 import { Room, Booking, Profile, Customer, ActivityLog, MenuCategory, InventoryItem, GuestOrder, StaffCall, StayExtension, ChatMessage, ChatTyping, ContactMessage, EmployeePayroll, TimeEntry, PayrollPeriod, PayrollEntry, HousekeepingTask, PromoCode, RatePlan, WaitlistEntry, Incident, ParkingSpot, BookingGroup } from '../types';
 import { AlertDialog, ConfirmDialog } from './AlertDialog';
 import { ToastContainer } from './Toast';
@@ -279,6 +280,16 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newPaymentOption, setNewPaymentOption] = useState('');
+
+  useEffect(() => {
+    const handleSettingsUpdate = () => {
+      setSettings(getSettings());
+    };
+    window.addEventListener('hotel-settings-updated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('hotel-settings-updated', handleSettingsUpdate);
+    };
+  }, []);
   
   // In-app notification center state
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -2093,7 +2104,12 @@ Confirm this change?`,
               </div>
             </div>
           ) : (
-            <div>
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            >
               {/* TABS 1: INSIGHTS OVERVIEW */}
               {activeTab === 'insights' && (
                 <div className="space-y-6">
@@ -5198,7 +5214,7 @@ Confirm this change?`,
                               setPromoForm={setPromoForm}
                             />
               )}
-            </div>
+            </motion.div>
           )}
         </main>
       </div>

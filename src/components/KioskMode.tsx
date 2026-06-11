@@ -20,10 +20,17 @@ export default function KioskMode({ onNavigate }: KioskModeProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successRoom, setSuccessRoom] = useState('');
-  const settings = getSettings();
+  const [settings, setSettings] = useState(() => getSettings());
 
   useEffect(() => {
     fetchAvailableRooms();
+    const handleSettingsUpdate = () => {
+      setSettings(getSettings());
+    };
+    window.addEventListener('hotel-settings-updated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('hotel-settings-updated', handleSettingsUpdate);
+    };
   }, []);
 
   const fetchAvailableRooms = async () => {

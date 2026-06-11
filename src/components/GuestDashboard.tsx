@@ -79,6 +79,16 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   // Alerts
   const [alertState, setAlertState] = useState<{ title: string; message: string } | null>(null);
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
+
+  useEffect(() => {
+    const handleSettingsUpdate = () => {
+      setSettings(getSettings());
+    };
+    window.addEventListener('hotel-settings-updated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('hotel-settings-updated', handleSettingsUpdate);
+    };
+  }, []);
   const [liveStayDuration, setLiveStayDuration] = useState('');
   const prevOrderStatusesRef = useRef<Record<string, string>>({});
   const prevExtensionStatusesRef = useRef<Record<string, string>>({});

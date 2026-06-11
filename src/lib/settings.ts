@@ -91,7 +91,7 @@ export function getSettings(): AppSettings {
       };
     }
   } catch (e) {
-    console.error('Failed to parse app settings, falling back to defaults', e);
+    // console.error('Failed to parse app settings, falling back to defaults', e);
   }
   return DEFAULT_SETTINGS;
 }
@@ -105,7 +105,7 @@ export async function fetchSettingsFromSupabase(): Promise<AppSettings> {
       .maybeSingle();
 
     if (error) {
-      console.warn('Could not read settings from Supabase:', error.message);
+      // console.warn('Could not read settings from Supabase:', error.message);
       return getSettings();
     }
 
@@ -131,7 +131,7 @@ export async function fetchSettingsFromSupabase(): Promise<AppSettings> {
       return merged;
     }
   } catch (e) {
-    console.error('Failed to fetch settings from Supabase:', e);
+    // console.error('Failed to fetch settings from Supabase:', e);
   }
   return getSettings();
 }
@@ -146,7 +146,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
     }, { onConflict: 'key' });
 
   if (error) {
-    console.warn('Failed to save settings to database, saving locally only:', error.message);
+    // console.warn('Failed to save settings to database, saving locally only:', error.message);
   }
 
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));

@@ -59,8 +59,7 @@ CREATE TABLE IF NOT EXISTS public.bookings (
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'checked-in', 'completed', 'cancelled')),
     assigned_employee_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    CONSTRAINT check_booking_dates CHECK (check_out_date > check_in_date),
-    CONSTRAINT check_in_not_past CHECK (check_in_date >= CURRENT_DATE)
+    CONSTRAINT check_booking_dates CHECK (check_out_date > check_in_date)
 );
 
 CREATE TABLE IF NOT EXISTS public.tasks (
@@ -618,6 +617,44 @@ CREATE TABLE IF NOT EXISTS public.rate_plans (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Shift schedules (persisted to DB instead of localStorage)
+CREATE TABLE IF NOT EXISTS public.shift_schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    day TEXT NOT NULL,
+    time_label TEXT NOT NULL,
+    assigned_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    role TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'swap_pending', 'swapped')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.shift_swaps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_shift_id UUID REFERENCES public.shift_schedules(id) ON DELETE CASCADE NOT NULL,
+    requesting_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    target_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    notes TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.shift_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shift_swaps ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_schedules' AND policyname='Shift schedules viewable by authenticated') THEN CREATE POLICY "Shift schedules viewable by authenticated" ON public.shift_schedules FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_schedules' AND policyname='Shift schedules manageable by authenticated') THEN CREATE POLICY "Shift schedules manageable by authenticated" ON public.shift_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_swaps' AND policyname='Shift swaps viewable by authenticated') THEN CREATE POLICY "Shift swaps viewable by authenticated" ON public.shift_swaps FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_swaps' AND policyname='Shift swaps manageable by authenticated') THEN CREATE POLICY "Shift swaps manageable by authenticated" ON public.shift_swaps FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
+
+-- Add public/anon policies for chat_messages (allows local/QR guests to use chat)
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_messages' AND policyname='Chat messages insertable by anon') THEN CREATE POLICY "Chat messages insertable by anon" ON public.chat_messages FOR INSERT WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_messages' AND policyname='Chat messages viewable by anon') THEN CREATE POLICY "Chat messages viewable by anon" ON public.chat_messages FOR SELECT USING (true); END IF; END $$;
+
+-- Add public/anon policies for chat_typing (allows local/QR guests to send typing indicators)
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing viewable by anon') THEN CREATE POLICY "Chat typing viewable by anon" ON public.chat_typing FOR SELECT USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing insertable by anon') THEN CREATE POLICY "Chat typing insertable by anon" ON public.chat_typing FOR INSERT WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing updatable by anon') THEN CREATE POLICY "Chat typing updatable by anon" ON public.chat_typing FOR UPDATE USING (true) WITH CHECK (true); END IF; END $$;
+
 CREATE TABLE IF NOT EXISTS public.waitlist (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     room_type TEXT NOT NULL,
@@ -656,6 +693,8 @@ ALTER TABLE public.waitlist ENABLE ROW LEVEL SECURITY;
 -- 12. RLS POLICIES FOR NEW TABLES
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups viewable by authenticated') THEN CREATE POLICY "Booking groups viewable by authenticated" ON public.booking_groups FOR SELECT TO authenticated USING (true); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups manageable by admins') THEN CREATE POLICY "Booking groups manageable by admins" ON public.booking_groups FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups manageable by all authenticated') THEN CREATE POLICY "Booking groups manageable by all authenticated" ON public.booking_groups FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups updatable by all authenticated') THEN CREATE POLICY "Booking groups updatable by all authenticated" ON public.booking_groups FOR UPDATE TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
 
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='housekeeping_tasks' AND policyname='Housekeeping viewable by authenticated') THEN CREATE POLICY "Housekeeping viewable by authenticated" ON public.housekeeping_tasks FOR SELECT TO authenticated USING (true); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='housekeeping_tasks' AND policyname='Housekeeping manageable by admins') THEN CREATE POLICY "Housekeeping manageable by admins" ON public.housekeeping_tasks FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;

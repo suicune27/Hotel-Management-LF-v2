@@ -33,7 +33,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const effectiveProfile: Profile = isLocalAccess
     ? { id: `local-${localId}`, email: `room${localId}@local`, full_name: `Room ${roomNumber || 'Guest'} Guest`, role: 'guest', created_at: new Date().toISOString() }
     : userProfile || { id: '', email: '', full_name: 'Guest', role: 'guest', created_at: new Date().toISOString() };
-  const chatSenderId = isLocalAccess ? null : effectiveProfile.id;
+  const chatSenderId = effectiveProfile.id;
 
   // Core data
   const [customerRecord, setCustomerRecord] = useState<Customer | null>(null);
@@ -109,6 +109,11 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   // Checkout request
   const [checkoutRequesting, setCheckoutRequesting] = useState(false);
 
+  // Local access verification
+  const [verified, setVerified] = useState(false);
+  const [verificationName, setVerificationName] = useState('');
+  const [verificationError, setVerificationError] = useState('');
+
   // Scroll chat to bottom when new messages arrive
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -133,11 +138,11 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
       if (bookingUid) {
         // DIRECT ACCESS MODE: Load booking by UID
-        const { data: bookingData } = await supabase
-          .from('bookings')
-          .select('*, rooms(*)')
-          .eq('id', bookingUid)
-          .maybeSingle();
+          const { data: bookingData } = await supabase
+            .from('bookings')
+            .select('*, rooms(*), customers(*)')
+            .eq('id', bookingUid)
+            .maybeSingle();
 
         if (bookingData && bookingData.status === 'checked-in' && (bookingData as any).rooms?.status === 'booked') {
           setCheckedInBooking(bookingData);
@@ -163,7 +168,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         if (room) {
           const { data: bookingData } = await supabase
             .from('bookings')
-            .select('*, rooms(*)')
+            .select('*, rooms(*), customers(*)')
             .eq('room_id', room.id)
             .eq('status', 'checked-in')
             .maybeSingle();
@@ -225,7 +230,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         await loadBookingData(activeCheckedIn.id);
       }
     } catch (err) {
-      console.error("Error loading guest data:", err);
+      // console.error("Error loading guest data:", err);
     } finally {
       setLoading(false);
     }
@@ -277,6 +282,15 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           if (prev.find(m => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'chat_messages',
+        filter: `booking_id=eq.${checkedInBooking.id}`
+      }, (payload) => {
+        const updated = payload.new as ChatMessage;
+        setChatMessages(prev => prev.map(m => m.id === updated.id ? { ...m, seen_at: updated.seen_at } : m));
       })
       .subscribe();
 
@@ -599,7 +613,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           message: `🍽️ New Order: ${orderSummary}`
         });
       } catch (chatErr) {
-        console.warn('Failed to send order chat notification:', chatErr);
+        // console.warn('Failed to send order chat notification:', chatErr);
       }
 
       // Refresh orders
@@ -630,9 +644,10 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking || !chatInput.trim()) return;
     setSendingChat(true);
     try {
+      const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatSenderId);
       const { data: newMsgData, error } = await supabase.from('chat_messages').insert({
         booking_id: checkedInBooking.id,
-        sender_id: chatSenderId,
+        sender_id: isValidUuid ? chatSenderId : null,
         sender_name: effectiveProfile.full_name || 'Guest',
         sender_role: 'guest',
         message: chatInput.trim()
@@ -734,7 +749,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           message: `🕐 Extension Request: ${extDesc}${extendReason.trim() ? ` — "${extendReason.trim()}"` : ''}`
         });
       } catch (chatErr) {
-        console.warn('Failed to send extension chat notification:', chatErr);
+        // console.warn('Failed to send extension chat notification:', chatErr);
       }
       setExtendDate('');
       setExtendHours(1);
@@ -829,8 +844,66 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const unreadChatCount = checkedInBooking ? chatMessages.filter(m => m.sender_role === 'staff' && !m.seen_at).length : 0;
   const pendingCallCount = staffCalls.filter(c => c.status === 'pending').length;
 
+  const guestName = checkedInBooking?.customers?.full_name || '';
+
   return (
     <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex flex-col">
+
+      {/* Local Access Verification Gate */}
+      {isLocalAccess && !verified && checkedInBooking && (
+        <div className="fixed inset-0 z-[100] bg-white flex items-center justify-center p-6">
+          <div className="w-full max-w-sm mx-auto text-center space-y-6">
+            <div className="w-16 h-16 mx-auto bg-emerald-50 rounded-2xl flex items-center justify-center border border-emerald-200">
+              <DoorOpen className="w-8 h-8 text-emerald-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-surface-900">Verify Your Identity</h2>
+              <p className="text-sm text-surface-500 mt-2">
+                For your security, please enter the name you registered under to access your booking.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={verificationName}
+                onChange={(e) => { setVerificationName(e.target.value); setVerificationError(''); }}
+                placeholder="Enter your registered name"
+                className="w-full px-4 py-3 bg-surface-50 border border-surface-200 rounded-xl text-sm text-center focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (verificationName.trim().toLowerCase() === guestName.trim().toLowerCase() ||
+                        guestName.toLowerCase().includes(verificationName.trim().toLowerCase())) {
+                      setVerified(true);
+                    } else {
+                      setVerificationError('Name does not match. Please try again.');
+                    }
+                  }
+                }}
+              />
+              {verificationError && (
+                <p className="text-xs text-rose-600 font-medium flex items-center justify-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {verificationError}
+                </p>
+              )}
+              <button
+                onClick={() => {
+                  if (verificationName.trim().toLowerCase() === guestName.trim().toLowerCase() ||
+                      guestName.toLowerCase().includes(verificationName.trim().toLowerCase())) {
+                    setVerified(true);
+                  } else {
+                    setVerificationError('Name does not match. Please try again.');
+                  }
+                }}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm transition-all cursor-pointer active:scale-[0.98]"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1">
         <header className="sticky top-0 bg-white/95 backdrop-blur-md z-40 border-b border-surface-100 shadow-sm">
@@ -838,7 +911,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
             <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => { if (!isLocalAccess) onNavigate('login'); }}>
               <span className="p-1.5 sm:p-2 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white rounded-lg font-bold text-sm sm:text-base font-mono">GH</span>
               <div className="min-w-0">
-                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber}` : 'Guest Portal'}</span>
+                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber || checkedInBooking?.rooms?.room_number || bookingUid?.slice(0, 8) || '—'}` : 'Guest Portal'}</span>
                 <span className="text-[8px] sm:text-[9px] block font-mono text-emerald-600 tracking-wider font-bold uppercase -mt-0.5 truncate">
                   {isLocalAccess ? 'Local Network Access' : `Welcome, ${effectiveProfile.full_name?.split(' ')[0] || 'Guest'}`}
                 </span>
@@ -1256,7 +1329,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                               <div key={order.id} className="flex items-center justify-between py-1.5 border-b border-surface-50 last:border-0 text-xs">
                                 <div className="min-w-0">
                                   <p className="font-semibold text-surface-800 truncate">{order.inventory_items?.name} x{order.quantity}</p>
-                                  <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
                                 </div>
                                 <span className={`px-1.5 py-0.5 text-[9px] font-bold uppercase rounded-full ml-2 whitespace-nowrap ${
                                   order.status === 'served' ? 'bg-emerald-50 text-emerald-700' :
@@ -1374,7 +1447,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                                 }`}>
                                   <p className="text-sm leading-relaxed">{msg.message}</p>
                                   <p className={`text-[9px] mt-1 ${isGuest ? 'text-brand-200' : 'text-surface-400'}`}>
-                                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                                   </p>
                                 </div>
                               </div>
@@ -1410,7 +1483,30 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                         <input
                           type="text"
                           value={chatInput}
-                          onChange={(e) => setChatInput(e.target.value)}
+                          onChange={(e) => {
+                            setChatInput(e.target.value);
+                            if (!checkedInBooking) return;
+                            if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+                            typingTimerRef.current = setTimeout(() => {
+                              supabase.from('chat_typing').upsert({
+                                booking_id: checkedInBooking.id,
+                                user_id: chatSenderId,
+                                user_name: effectiveProfile.full_name || 'Guest',
+                                user_role: 'guest',
+                                is_typing: false
+                              }, { onConflict: 'booking_id, user_id' }).then(() => {});
+                              typingTimerRef.current = null;
+                            }, 2000);
+                            if (e.target.value.trim()) {
+                              supabase.from('chat_typing').upsert({
+                                booking_id: checkedInBooking.id,
+                                user_id: chatSenderId,
+                                user_name: effectiveProfile.full_name || 'Guest',
+                                user_role: 'guest',
+                                is_typing: true
+                              }, { onConflict: 'booking_id, user_id' }).then(() => {});
+                            }
+                          }}
                           placeholder="Type your message..."
                           className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors placeholder:text-surface-400"
                         />
@@ -1612,7 +1708,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                                 if (ampm === 'AM' && h === 12) h = 0;
                                 const outDate = new Date(checkedInBooking.check_out_date);
                                 outDate.setHours(h + extendHours, m);
-                                return outDate.toLocaleDateString() + ' at ' + outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                return outDate.toLocaleDateString() + ' at ' + outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
                               })()}
                             </p>
                           )}

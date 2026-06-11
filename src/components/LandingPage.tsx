@@ -158,7 +158,7 @@ export default function LandingPage({ onNavigate, userSession, userProfile, onLo
       const pending = JSON.parse(pendingJson) as PendingBooking;
       processPendingBooking(pending);
     } catch (err) {
-      console.error('Failed to parse pending booking:', err);
+      // console.error('Failed to parse pending booking:', err);
       // Only clear on parse error (malformed data); booking errors handled in processPendingBooking
       sessionStorage.removeItem('pendingBooking');
     }
@@ -263,16 +263,16 @@ export default function LandingPage({ onNavigate, userSession, userProfile, onLo
           .select('*')
           .order('created_at', { ascending: false });
         if (roomError) {
-          console.error("Supabase rooms fetch error:", roomError.message, roomError);
+          // console.error("Supabase rooms fetch error:", roomError.message, roomError);
           setRooms([]);
         } else if (roomData) {
           console.log("Rooms fetched from DB:", roomData.length, "records");
           setRooms(roomData);
         } else {
-          console.warn("Rooms query returned null/undefined");
+          // console.warn("Rooms query returned null/undefined");
         }
       } catch (err) {
-        console.error("Exception fetching rooms:", err);
+        // console.error("Exception fetching rooms:", err);
         setRooms([]);
       } finally {
         setLoadingRooms(false);
@@ -288,7 +288,7 @@ export default function LandingPage({ onNavigate, userSession, userProfile, onLo
           setTestimonials(testData);
         }
       } catch (err) {
-        console.error("Error fetching testimonials:", err);
+        // console.error("Error fetching testimonials:", err);
       } finally {
         setLoadingTestimonials(false);
       }
@@ -301,7 +301,7 @@ export default function LandingPage({ onNavigate, userSession, userProfile, onLo
           .not('status', 'in', '("completed","cancelled")');
         if (bookingData) setBookings(bookingData);
       } catch (err) {
-        console.error("Error fetching bookings:", err);
+        // console.error("Error fetching bookings:", err);
       }
     }
     loadData();
@@ -1045,7 +1045,7 @@ export default function LandingPage({ onNavigate, userSession, userProfile, onLo
                 setConciergeSubject('');
                 setConciergeMessage('');
               } catch (err) {
-                console.error('Failed to send message:', err);
+                // console.error('Failed to send message:', err);
               } finally {
                 setConciergeSubmitting(false);
               }

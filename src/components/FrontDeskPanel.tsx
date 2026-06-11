@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { Room, Profile, GuestOrder, ChatMessage, StaffCall, Booking } from '../types';
+import { Room, Profile, GuestOrder, ChatMessage, ChatTyping, StaffCall, Booking } from '../types';
 import {
   Building, Check, X,
   Loader2, LogOut, Home, Search, Calendar, Bell, MessageSquareText,
@@ -89,6 +89,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
   const [editCheckOutDate, setEditCheckOutDate] = useState('');
   const [editCheckInTime, setEditCheckInTime] = useState('');
   const [editCheckOutTime, setEditCheckOutTime] = useState('');
+  const [editRecurringRule, setEditRecurringRule] = useState('');
   const [bookingsModal, setBookingsModal] = useState<{ room: Room; bookings: Booking[] } | null>(null);
   const [transferDialog, setTransferDialog] = useState<Room | null>(null);
   const [transferTargetRoomId, setTransferTargetRoomId] = useState<string | null>(null);
@@ -162,6 +163,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
   const [chatInput, setChatInput] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [typingUsers, setTypingUsers] = useState<ChatTyping[]>([]);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Requests
   const [staffCalls, setStaffCalls] = useState<StaffCall[]>([]);
@@ -576,6 +579,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
       case 'modify-reservation': {
         const b = resolveBooking();
         close(); b && setEditBookingDialog({ booking: b, room: selectedRoom });
+        b && setEditRecurringRule(b.recurring_rule || '');
         break;
       }
       case 'cancel-reservation': {
@@ -912,7 +916,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
           supabase.from('activity_logs').select('*').eq('user_id', staffId).order('created_at', { ascending: false }).limit(200)
         ]);
         if (timeRes.error) {
-          console.error('frontdesk time_entries load error:', timeRes.error);
+          // console.error('frontdesk time_entries load error:', timeRes.error);
         }
         if (timeRes.data) {
           setTimeEntries(timeRes.data);
@@ -942,7 +946,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
         }
       }
     } catch (e) {
-      console.error("Error loading front desk attendance details:", e);
+      // console.error("Error loading front desk attendance details:", e);
     }
 
     setLoading(false);
@@ -974,7 +978,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
           .limit(100);
 
         if (error) {
-          console.error('frontdesk realtime time_entries error:', error);
+          // console.error('frontdesk realtime time_entries error:', error);
           return;
         }
 
@@ -1095,7 +1099,31 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+      // Typing indicators subscription
+      const typingChannel = supabase
+        .channel('frontdesk-typing')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'chat_typing'
+        }, (payload) => {
+          const typingData = payload.new as ChatTyping;
+          if (typingData.user_role === 'guest' && typingData.booking_id) {
+            setTypingUsers(prev => {
+              const filtered = prev.filter(t => t.user_id !== typingData.user_id);
+              if (typingData.is_typing) {
+                return [...filtered, typingData];
+              }
+              return filtered;
+            });
+          }
+        })
+        .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(typingChannel);
+    };
   }, []);
 
   // Realtime staff_calls — insert new calls immediately
@@ -1296,6 +1324,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
         check_out_date: editCheckOutDate,
         check_in_time: editCheckInTime,
         check_out_time: editCheckOutTime,
+        recurring_rule: editRecurringRule || null,
       }).eq('id', booking.id);
       if (error) { showError('Edit Failed', error.message); setActionLoading(null); return; }
       await logActivity('Booking Edited', `Suite #${room.room_number} booking updated: ${editCheckInDate} ${editCheckInTime} → ${editCheckOutDate} ${editCheckOutTime}`, booking.id);
@@ -1445,6 +1474,31 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     return Array.from(convMap.values()).sort((a, b) => new Date(b.lastMsg.created_at).getTime() - new Date(a.lastMsg.created_at).getTime());
   })();
 
+  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setChatInput(e.target.value);
+    if (!selectedChatBooking || !userProfile?.id) return;
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      supabase.from('chat_typing').upsert({
+        booking_id: selectedChatBooking,
+        user_id: userProfile.id,
+        user_name: userProfile.full_name || 'Front Desk',
+        user_role: 'staff',
+        is_typing: false
+      }, { onConflict: 'booking_id, user_id' }).then(() => {});
+      typingTimerRef.current = null;
+    }, 2000);
+    if (e.target.value.trim()) {
+      supabase.from('chat_typing').upsert({
+        booking_id: selectedChatBooking,
+        user_id: userProfile.id,
+        user_name: userProfile.full_name || 'Front Desk',
+        user_role: 'staff',
+        is_typing: true
+      }, { onConflict: 'booking_id, user_id' }).then(() => {});
+    }
+  };
+
   const sendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || !selectedChatBooking) return;
@@ -1459,7 +1513,18 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
       });
       if (error) { showError('Chat Error', `Failed to send message: ${error.message}`); return; }
       setChatInput('');
-      
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+      if (userProfile?.id) {
+        supabase.from('chat_typing').upsert({
+          booking_id: selectedChatBooking,
+          user_id: userProfile.id,
+          user_name: userProfile.full_name || 'Front Desk',
+          user_role: 'staff',
+          is_typing: false
+        }, { onConflict: 'booking_id, user_id' }).then(() => {});
+      }
+
       // Get guest context
       const bookingMsgs = chatMessages.filter(m => m.booking_id === selectedChatBooking);
       const guestName = bookingMsgs[0]?.bookings?.customers?.full_name || 'Guest';
@@ -1583,7 +1648,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
               )}
               <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-surface-100 rounded-lg font-mono">
                 <Clock className="w-3.5 h-3.5 text-surface-400" />
-                <span className="text-xs font-semibold text-surface-600">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="text-xs font-semibold text-surface-600">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                 <span className="text-[9px] text-surface-400">|</span>
                 <span className="text-[9px] text-surface-400">{clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
               </div>
@@ -1796,6 +1861,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
               setChatSearch={setChatSearch}
               sendChatMessage={sendChatMessage}
               chatEndRef={chatEndRef}
+              typingUsers={typingUsers}
+              onChatInputChange={handleChatInputChange}
             />}
 
             {/* ===== REQUESTS TAB ===== */}
@@ -1916,7 +1983,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-surface-900">{(e as any).users?.full_name || 'Staff'}</p>
-                              <p className="text-xs text-surface-400">Clocked in: {new Date(e.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                              <p className="text-xs text-surface-400">Clocked in: {new Date(e.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
                             </div>
                             <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-full">
                               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -2339,10 +2406,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                                 <tr key={entry.id} className="hover:bg-surface-50/50">
                                   <td className="p-4 font-semibold text-surface-900">{formattedDate}</td>
                                   <td className="p-4 text-surface-500">{dayOfWeek}</td>
-                                  <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</td>
-                                  <td className="p-4 font-mono">
-                                    {entry.clock_out ? (
-                                      new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                                  <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })}</td>
+                                    <td className="p-4 font-mono">
+                                      {entry.clock_out ? (
+                                        new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })
                                     ) : (
                                       <span className="text-rose-500 font-bold uppercase text-[9px] animate-pulse">Running Shift</span>
                                     )}
@@ -2817,7 +2884,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                     });
                     if (error) { showError('Assignment Failed', error.message); return; }
                     const { error: roomErr } = await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', housekeepingDialog.room.id);
-                    if (roomErr) console.error('Room status update failed:', roomErr);
+                    if (roomErr) // console.error('Room status update failed:', roomErr);
                     await logActivity('Housekeeping Assigned', `Suite #${housekeepingDialog.room.room_number} assigned to ${c.full_name} for cleaning`);
                     setModalStack(null); setHousekeepingDialog(null);
                     showSuccess(`Cleaner assigned: ${c.full_name}`);
@@ -2988,6 +3055,17 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                   </span>
                 </div>
               )}
+              <div>
+                <label className="block text-xs font-semibold text-surface-500 mb-1">Recurring Booking</label>
+                <select value={editRecurringRule} onChange={(e) => setEditRecurringRule(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-surface-900 cursor-pointer">
+                  <option value="">No repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Bi-Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 pt-1">
               <button onClick={() => { setModalStack(null); setEditBookingDialog(null); }} className="flex-1 py-2.5 border border-surface-200 text-surface-600 rounded-xl text-xs font-semibold cursor-pointer hover:bg-surface-50 transition-all">Cancel</button>
@@ -3259,7 +3337,7 @@ function ActiveOrdersView({ orders, updateOrderStatus, setOrderDetailModal, curr
                 <div key={order.id} className="px-4 py-2.5 flex items-center gap-3 hover:bg-surface-50/50 transition-colors">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span><span className="text-xs font-semibold text-surface-500">{currencySymbol}{Number(order.total_price).toFixed(2)}</span></div>
-                    <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{order.notes ? ` — "${order.notes}"` : ''}</p>
+                    <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}{order.notes ? ` — "${order.notes}"` : ''}</p>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${order.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}`}>{order.status}</span>
                   {order.status === 'pending' && <button onClick={() => updateOrderStatus(order, 'preparing')} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-bold cursor-pointer transition-all whitespace-nowrap">Start</button>}
@@ -3300,7 +3378,7 @@ function HistoryOrdersView({ orders, setOrderDetailModal }: {
             <h3 className="text-xs font-bold text-surface-500 uppercase tracking-wider mb-3 flex items-center gap-2"><Calendar className="w-3.5 h-3.5" />{dateLabel}<span className="text-[10px] text-surface-300 font-normal">({orders.length} order{orders.length !== 1 ? 's' : ''})</span></h3>
             <div className="space-y-2">{orders.map((order) => { const item = order.inventory_items; const guestName = (order.bookings as any)?.customers?.full_name || 'Guest'; const roomNum = (order.bookings as any)?.rooms?.room_number || '?'; return (
               <div key={order.id} className="bg-white rounded-xl border border-surface-100 shadow-sm px-4 py-3 flex items-center gap-3 hover:bg-surface-50/50 transition-colors">
-                <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span></div><p className="text-[10px] text-surface-500">Suite #{roomNum} · {guestName} · {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span></div><p className="text-[10px] text-surface-500">Suite #{roomNum} · {guestName} · {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p></div>
                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${order.status === 'served' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{order.status}</span>
                 <button onClick={() => setOrderDetailModal(order)} className="p-1.5 text-surface-400 hover:text-surface-600 hover:bg-surface-100 rounded-lg cursor-pointer"><Eye className="w-3.5 h-3.5" /></button>
               </div>
@@ -3315,11 +3393,13 @@ function HistoryOrdersView({ orders, setOrderDetailModal }: {
 function ChatContent({
   chatMessages, chatConversations, selectedChatBooking, setSelectedChatBooking,
   chatInput, setChatInput, chatSearch, setChatSearch, sendChatMessage, chatEndRef,
+  typingUsers, onChatInputChange,
 }: {
   chatMessages: ChatMessage[]; chatConversations: any[]; selectedChatBooking: string | null;
   setSelectedChatBooking: (id: string | null) => void; chatInput: string; setChatInput: (v: string) => void;
   chatSearch: string; setChatSearch: (v: string) => void; sendChatMessage: (e: React.FormEvent) => Promise<void>;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
+  typingUsers: ChatTyping[]; onChatInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   return (
@@ -3378,16 +3458,30 @@ function ChatContent({
                     <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${msg.sender_role === 'staff' ? 'bg-brand-600 text-white rounded-br-md' : 'bg-white border border-surface-200 text-surface-800 rounded-bl-md shadow-sm'}`}>
                       <p className="text-[10px] font-semibold mb-0.5 opacity-80">{msg.sender_role === 'staff' ? 'You' : msg.sender_name}</p>
                       <p className="text-sm leading-relaxed">{msg.message}</p>
-                      <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
                     </div>
                   </div>
                 ))
               )}
               <div ref={chatEndRef} />
             </div>
+            {/* Typing Indicator */}
+            {selectedChatBooking && typingUsers
+              .filter(t => t.booking_id === selectedChatBooking && t.user_role === 'guest' && t.is_typing)
+              .slice(0, 1)
+              .map(t => (
+                <div key={t.user_id} className="flex items-center gap-2 px-4 py-1.5">
+                  <span className="text-[10px] text-surface-400 italic">{t.user_name} is typing</span>
+                  <span className="flex gap-0.5">
+                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '0ms'}} />
+                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '150ms'}} />
+                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '300ms'}} />
+                  </span>
+                </div>
+              ))}
             <div className="border-t border-surface-100 p-4 bg-white">
               <form onSubmit={sendChatMessage} className="flex gap-2">
-                <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a reply..." className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors" />
+                <input type="text" value={chatInput} onChange={onChatInputChange} placeholder="Type a reply..." className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors" />
                 <button type="submit" disabled={!chatInput.trim()} className="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-40 disabled:pointer-events-none transition-all flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Send</button>
               </form>
             </div>

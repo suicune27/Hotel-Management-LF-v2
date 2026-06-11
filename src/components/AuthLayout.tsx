@@ -73,7 +73,7 @@ export default function AuthLayout({ onNavigate, onAuthSuccess }: AuthLayoutProp
           .single();
 
         if (dbErr) {
-          console.warn("Could not retrieve custom profile row - linking fallback metadata", dbErr.message);
+          // console.warn("Could not retrieve custom profile row - linking fallback metadata", dbErr.message);
         }
 
         const resolvedProfile = profile || { 

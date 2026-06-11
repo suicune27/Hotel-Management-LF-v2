@@ -266,7 +266,7 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
         .limit(20);
       setAnnouncements(ann || []);
     } catch (err) {
-      console.error("Error retrieving colleague workspace:", err);
+      // console.error("Error retrieving colleague workspace:", err);
     } finally {
       setLoading(false);
     }
@@ -1154,10 +1154,10 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
                                   <tr key={entry.id} className="text-surface-700 hover:bg-surface-50/50">
                                     <td className="p-4 font-semibold text-surface-900">{formattedDate}</td>
                                     <td className="p-4 text-surface-500">{dayOfWeek}</td>
-                                    <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</td>
+                                    <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })}</td>
                                     <td className="p-4 font-mono">
                                       {entry.clock_out ? (
-                                        new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                                        new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })
                                       ) : (
                                         <span className="text-rose-500 font-bold uppercase text-[9px] animate-pulse">Running Shift</span>
                                       )}
@@ -1420,7 +1420,7 @@ export default function EmployeeDashboard({ onNavigate, userSession, userProfile
                             <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0"><UtensilsCrossed className="w-5 h-5 text-amber-600" /></div>
                             <div className="min-w-0">
                               <p className="font-bold text-surface-900 text-sm">{order.inventory_items?.name || 'Item'}</p>
-                              <p className="text-xs text-surface-500">x{order.quantity} · Suite #{order.bookings?.rooms?.room_number || '?'} · <span className="font-mono text-[10px]">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></p>
+                              <p className="text-xs text-surface-500">x{order.quantity} · Suite #{order.bookings?.rooms?.room_number || '?'} · <span className="font-mono text-[10px]">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span></p>
                               {order.notes && <p className="text-[11px] text-surface-400 italic">{order.notes}</p>}
                             </div>
                           </div>

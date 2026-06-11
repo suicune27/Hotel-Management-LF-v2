@@ -1,7 +1,7 @@
-import { Activity, Building, BookOpen, UserCheck, Users, Package, Bell, Clock, MessageSquareText, Mail, Grid3X3, Layers, Settings, ChevronLeft } from 'lucide-react';
+import { Activity, Building, BookOpen, UserCheck, Users, Package, Bell, Clock, MessageSquareText, Mail, Grid3X3, Layers, Settings, ChevronLeft, Percent } from 'lucide-react';
 import { motion } from 'motion/react';
 
-export type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings';
+export type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -24,6 +24,7 @@ const PRIMARY_TABS: { id: AdminTab; label: string; icon: any }[] = [
   { id: 'messages', label: 'Inbox', icon: Mail },
   { id: 'qr_codes', label: 'QR Codes', icon: Grid3X3 },
   { id: 'audit_logs', label: 'Logs', icon: Layers },
+  { id: 'promotions', label: 'Promos', icon: Percent },
 ];
 
 const BOTTOM_TABS: { id: AdminTab; label: string; icon: any }[] = [

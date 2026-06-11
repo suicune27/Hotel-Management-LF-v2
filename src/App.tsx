@@ -60,7 +60,7 @@ function AppContent() {
         return metaProfile;
       }
     } catch (err) {
-      console.warn("Retrying profile attachment via metadata", err);
+      // console.warn("Retrying profile attachment via metadata", err);
       const metaProfile: Profile = {
         id: user.id,
         email: user.email || '',
@@ -243,7 +243,7 @@ function AppContent() {
         await supabase.auth.signOut();
       }
     } catch (err) {
-      console.warn('Sign out error (non-fatal):', err);
+      // console.warn('Sign out error (non-fatal):', err);
     }
     setSession(null);
     setProfile(null);
@@ -264,7 +264,7 @@ function AppContent() {
         details: `Logged in as ${resolvedProfile.role || 'staff'}`
       }).then(({ error }) => {
         if (error) {
-          console.warn('Login tracking insert failed:', error.message);
+          // console.warn('Login tracking insert failed:', error.message);
         }
       });
     }

@@ -28,6 +28,7 @@ import AdminAuditLogsTab from './admin/AdminAuditLogsTab';
 import AdminMessagesTab from './admin/AdminMessagesTab';
 import AdminQRCodesTab from './admin/AdminQRCodesTab';
 import AdminSettingsTab from './admin/AdminSettingsTab';
+import AdminPromotionsTab from './admin/AdminPromotionsTab';
 
 interface AdminDashboardProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard') => void;
@@ -36,7 +37,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings';
+type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions';
 
 function generateAllDaySlots(): string[] {
   const slots: string[] = [];
@@ -456,7 +457,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       for (const msg of unreadGuestMsgs) {
         const { error } = await supabase.from('chat_messages').update({ seen_at: now }).eq('id', msg.id);
         if (error) {
-          console.error('Failed to mark message as seen:', error);
+          // console.error('Failed to mark message as seen:', error);
           setChatMessages(prev => prev.map(m => m.id === msg.id ? { ...m, seen_at: null as any } : m));
         }
       }
@@ -483,7 +484,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       for (const msg of unread) {
         const { error } = await supabase.from('contact_messages').update({ read_at: now }).eq('id', msg.id);
         if (error) {
-          console.error('Failed to mark message as read:', error);
+          // console.error('Failed to mark message as read:', error);
           setContactMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read_at: null as any } : m));
         }
       }
@@ -625,7 +626,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           break;
         case 'chat_messages':
           const { data: chatsD, error: chatsE } = await supabase.from('chat_messages').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false });
-          if (chatsE) console.error('chat_messages refresh error:', chatsE);
+          if (chatsE) // console.error('chat_messages refresh error:', chatsE);
           if (chatsD) setChatMessages(chatsD);
           break;
         case 'employee_payroll':
@@ -678,7 +679,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           break;
     }
     } catch (err: any) {
-      console.error("refreshTable error:", err);
+      // console.error("refreshTable error:", err);
     }
   };
 
@@ -743,7 +744,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
         supabase.from('parking_spots').select('*, bookings(*)').order('spot_number', { ascending: true }),
       ]);
 
-      if (chatsD.error) console.error('chat_messages initial load error:', chatsD.error);
+      if (chatsD.error) // console.error('chat_messages initial load error:', chatsD.error);
 
       if (roomsD.data) setRooms(roomsD.data);
       if (bookingsD.data) setBookings(bookingsD.data);
@@ -774,7 +775,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       const { data: bookingGroupsD } = await supabase.from('booking_groups').select('*').order('created_at', { ascending: false });
       if (bookingGroupsD) setBookingGroups(bookingGroupsD);
     } catch (err) {
-      console.error("Error loading administrative matrices:", err);
+      // console.error("Error loading administrative matrices:", err);
     } finally {
       setLoading(false);
     }
@@ -810,7 +811,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           setWorkforceAccomplishments(data);
         }
       } catch (err) {
-        console.error("fetchAccomplishments error:", err);
+        // console.error("fetchAccomplishments error:", err);
       }
     };
     fetchAccomplishments();
@@ -907,7 +908,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           if (shouldProcessRealtimeEvent(`attendance:insert:${entryId}`)) {
             supabase.from('users').select('full_name').eq('id', newEntry.user_id).maybeSingle().then(({ data: u }) => {
               const who = u?.full_name || 'A staff member';
-              const when = newEntry.clock_in ? new Date(newEntry.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now';
+              const when = newEntry.clock_in ? new Date(newEntry.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : 'now';
               addToast('info', 'Attendance: Clock In', `${who} clocked in at ${when}.`, { label: 'Open Time Tracking', onClick: () => { setActiveTab('workforce'); setWfSubTab('time'); } });
               addNotification({ type: 'info', title: 'Attendance: Clock In', message: `${who} clocked in at ${when}.`, action: () => { setActiveTab('workforce'); setWfSubTab('time'); } });
             });
@@ -917,7 +918,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           if (shouldProcessRealtimeEvent(`attendance:clockout:${entryId}:${newEntry.clock_out}`)) {
             supabase.from('users').select('full_name').eq('id', newEntry.user_id).maybeSingle().then(({ data: u }) => {
               const who = u?.full_name || 'A staff member';
-              const when = newEntry.clock_out ? new Date(newEntry.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now';
+              const when = newEntry.clock_out ? new Date(newEntry.clock_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : 'now';
               addToast('info', 'Attendance: Clock Out', `${who} clocked out at ${when}.`, { label: 'Open Time Tracking', onClick: () => { setActiveTab('workforce'); setWfSubTab('time'); } });
               addNotification({ type: 'info', title: 'Attendance: Clock Out', message: `${who} clocked out at ${when}.`, action: () => { setActiveTab('workforce'); setWfSubTab('time'); } });
             });
@@ -941,13 +942,19 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           }
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, (payload) => {
-        if (payload.eventType === 'INSERT' && payload.new) {
-          const chatMsg = payload.new as any;
-          if (chatMsg.sender_role === 'guest') {
-            addNotification({ type: 'chat', title: 'New Guest Message', message: `${chatMsg.sender_name || 'Guest'}: ${chatMsg.message?.slice(0, 80)}` });
-          }
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, async (payload) => {
+        const chatMsg = payload.new as any;
+        if (chatMsg.sender_role === 'guest') {
+          addNotification({ type: 'chat', title: 'New Guest Message', message: `${chatMsg.sender_name || 'Guest'}: ${chatMsg.message?.slice(0, 80)}` });
         }
+        if (chatMsg.id) {
+          const { data } = await supabase.from('chat_messages').select('*, bookings(*, customers(*), rooms(*))').eq('id', chatMsg.id).maybeSingle();
+          if (data) setChatMessages(prev => prev.some(c => c.id === data.id) ? prev : [...prev, data as any]);
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_messages' }, (payload) => {
+        const updated = payload.new as any;
+        setChatMessages(prev => prev.map(m => m.id === updated.id ? { ...m, seen_at: updated.seen_at } : m));
       })
       .subscribe();
 
@@ -1165,7 +1172,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
             details: `New suite layout category "${cleanName}" was created and registered`
           });
         } catch (logErr) {
-          console.warn('Logging category addition failed:', logErr);
+          // console.warn('Logging category addition failed:', logErr);
         }
       }
     );
@@ -1323,7 +1330,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
               access_token: adminTokens.access_token,
               refresh_token: adminTokens.refresh_token
             });
-            if (sessionError) console.warn('Session restore warning:', sessionError);
+            if (sessionError) { /* session restore warning suppressed */ }
           }
         } finally {
           (window as any).__opencode_suppressAuthRedirect = false;
@@ -1590,7 +1597,7 @@ Confirm this change?`,
               message: `${chatMsg} —” ${order.inventory_items?.name || 'Item'} x${order.quantity}`
             });
           } catch (chatErr) {
-            console.warn('Failed to send order status chat:', chatErr);
+            // console.warn('Failed to send order status chat:', chatErr);
           }
 
           await loadDatabase();
@@ -4548,6 +4555,13 @@ Confirm this change?`,
                                       <button onClick={() => { setGuestNotesForm({ notes: cust.notes || '', preferences: cust.preferences ? JSON.stringify(cust.preferences, null, 2) : '{}' }); setGuestNotesModal(cust); }} className="p-0.5 text-surface-400 hover:text-brand-600 hover:bg-brand-50 rounded transition-colors cursor-pointer flex-shrink-0" title="Edit notes &amp; preferences"><Edit3 className="w-3 h-3" /></button>
                                     </div>
                                     <p className="text-[10px] text-surface-400 truncate">{cust.email}</p>
+                                    {cust.preferences && typeof cust.preferences === 'object' && Object.keys(cust.preferences).length > 0 && (
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {Object.entries(cust.preferences).slice(0, 3).map(([key, val]) => (
+                                          <span key={key} className="px-1.5 py-0.5 bg-brand-50 text-brand-700 rounded text-[8px] font-medium">{key}: {String(val)}</span>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                                 {active ? (
@@ -4793,7 +4807,7 @@ Confirm this change?`,
                                       </p>
                                       <p className="text-sm leading-relaxed">{msg.message}</p>
                                       <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>
-                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                                       </p>
                                       {msg.sender_role === 'guest' && msg.message.includes('🍽️') && selectedChatBooking && (
                                         <button
@@ -5194,7 +5208,24 @@ Confirm this change?`,
                             />
               )}
 
-              {/* TABS 12: RESORT SETTINGS SETUP */}
+              {/* TABS 13: PROMOTIONS (Promo Codes, Rate Plans, Waitlist) */}
+                            {activeTab === 'promotions' && (
+                <AdminPromotionsTab
+                  promoCodes={promoCodes}
+                  ratePlans={ratePlans}
+                  waitlist={waitlist}
+                  rooms={rooms}
+                  bookings={bookings}
+                  userProfile={userProfile}
+                  settings={settings}
+                  addToast={addToast}
+                  refreshTable={refreshTable}
+                  triggerConfirm={triggerConfirm}
+                  triggerAlert={triggerAlert}
+                />
+              )}
+
+              {/* TABS 14: RESORT SETTINGS SETUP */}
                             {activeTab === 'settings' && (
                 <AdminSettingsTab
                               settings={settings}
@@ -6856,7 +6887,7 @@ Confirm this change?`,
                       <span className="text-surface-400 text-[11px]">Ã—{o.quantity}</span>
                       <span className="font-mono text-surface-600 text-[11px]">{settings.currencySymbol}{Number(o.total_price).toFixed(2)}</span>
                     </div>
-                    <span className="text-[10px] text-surface-400 hidden sm:inline">{new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="text-[10px] text-surface-400 hidden sm:inline">{new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <span className={`px-2 py-0.5 font-bold uppercase text-[9px] rounded-full ${
@@ -7542,10 +7573,11 @@ Confirm this change?`,
                   className="w-full bg-white border border-surface-200 rounded-lg py-2.5 px-3 text-xs focus:outline-none focus:border-brand-500" />
               </div>
               <div>
-                <label className="block text-surface-500 font-medium mb-1.5">Preferences (JSON)</label>
-                <textarea rows={5} value={guestNotesForm.preferences} onChange={(e) => setGuestNotesForm({ ...guestNotesForm, preferences: e.target.value })}
-                  placeholder='{"room_preference": "high_floor", "dietary": "vegetarian"}'
-                  className="w-full bg-white border border-surface-200 rounded-lg py-2.5 px-3 text-xs font-mono focus:outline-none focus:border-brand-500" />
+                <label className="block text-xs font-medium text-surface-700 mb-1">Preferences (JSON format)</label>
+                <textarea rows={5} value={guestNotesForm.preferences} onChange={(e) => setGuestNotesForm({...guestNotesForm, preferences: e.target.value})}
+                  placeholder='{"smoking":"no","floor":"high","extra_towels":2}'
+                  className="w-full bg-white border border-surface-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-brand-500" />
+                <p className="text-[9px] text-surface-400 mt-1">Enter as JSON object. Common keys: smoking, floor, bedding, extra_towels, welcome_drink, late_checkout</p>
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t border-surface-100">
                 <button type="button" onClick={() => setGuestNotesModal(null)} className="px-4 py-2 border border-surface-200 text-surface-600 hover:bg-surface-50 rounded-lg font-medium cursor-pointer text-xs">Cancel</button>

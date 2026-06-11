@@ -27,7 +27,7 @@ export function useOptimisticSync<T extends { id: string }>(
       } catch (err: any) {
         setData(originalDataRef.current);
         if (onSaveErrorRef.current) onSaveErrorRef.current(err);
-        else console.error('SyncManager Error:', err.message);
+        else { /* sync error suppressed */ }
       }
     }, 5000);
     fn._table = table;

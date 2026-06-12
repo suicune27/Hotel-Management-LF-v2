@@ -1284,12 +1284,27 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
     }
   }, [selectedChatBooking]);
 
+  // Helper: check if a booking's check-out time has passed
+  const isBookingOverstayed = (b: Booking): boolean => {
+    const now = new Date();
+    const timeStr = b.check_out_time;
+    const [t, mod] = timeStr.split(' ');
+    let [h, m] = t.split(':').map(Number);
+    if (mod === 'PM' && h !== 12) h += 12;
+    if (mod === 'AM' && h === 12) h = 0;
+    const checkoutDate = new Date(b.check_out_date);
+    checkoutDate.setHours(h, m, 0, 0);
+    return now > checkoutDate;
+  };
+
   // Derived: only show active guests whose room status also confirms "booked"
   const activeGuests = new Map<string, string>();
+  const overstayedRoomIds = new Set<string>();
   const roomStatusMap = new Map(rooms.map((r) => [r.id, r.status]));
   for (const b of activeBookingsRaw) {
     if (roomStatusMap.get(b.room_id) === 'booked') {
       activeGuests.set(b.room_id, (b as any).customers?.full_name || 'Guest');
+      if (isBookingOverstayed(b)) overstayedRoomIds.add(b.room_id);
     }
   }
 
@@ -1902,6 +1917,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                     <div className="flex items-center gap-1.5 text-[9px]">
                       <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">{statCounts.available} free</span>
                       <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">{statCounts.booked} occupied</span>
+                      {overstayedRoomIds.size > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-bold">{overstayedRoomIds.size} overstayed</span>}
                       <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-bold">{statCounts.reserved} reserved</span>
                       <span className="px-2 py-0.5 rounded-full bg-surface-100 text-surface-500 font-bold">{rooms.length} total</span>
                     </div>
@@ -1933,7 +1949,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                                   <span className="text-xs font-bold text-blue-700">#{r.room_number}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-bold text-surface-900 truncate">{activeGuests.get(r.id)}</p>
+                                  <p className="text-sm font-bold text-surface-900 truncate flex items-center gap-1.5">
+                                    {activeGuests.get(r.id)}
+                                    {overstayedRoomIds.has(r.id) && <span className="text-[8px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200 animate-pulse">OVERSTAY</span>}
+                                  </p>
                                   <p className="text-[10px] text-surface-400">Suite #{r.room_number} · {r.type}</p>
                                 </div>
                                 <button
@@ -1958,6 +1977,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                       actionLoading={actionLoading}
                       statCounts={statCounts}
                       activeGuests={activeGuests}
+                      overstayedRoomIds={overstayedRoomIds}
                       currencySymbol={settings.currencySymbol}
                       onSearchChange={setSearchQuery}
                       onFilterChange={setStatusFilter}

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Building, BedDouble, Loader2, LogOut, Check, Search, User } from 'lucide-react';
+import { Building, BedDouble, Loader2, LogOut, Check, Search, User, Clock } from 'lucide-react';
 import { Room } from '../../types';
 import { StatusChip } from './StatusChip';
 
@@ -8,6 +8,7 @@ interface RoomCardProps {
   isSelected: boolean;
   isLoading: boolean;
   guestName?: string;
+  isOverstayed?: boolean;
   currencySymbol: string;
   onSelect: () => void;
   onQuickAction: (action: string) => void;
@@ -36,7 +37,7 @@ const QUICK_ACTIONS: Record<string, { label: string; icon: any; color: string; b
   ],
 };
 
-export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbol, onSelect, onQuickAction }: RoomCardProps) {
+export function RoomCard({ room, isSelected, isLoading, guestName, isOverstayed, currencySymbol, onSelect, onQuickAction }: RoomCardProps) {
   const actions = QUICK_ACTIONS[room.status] || [];
 
   // Determine elegant Bento styles based on room status
@@ -108,8 +109,13 @@ export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbo
         {/* Gradient overlay for better text readability */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
         
-        {/* Status badge */}
-        <div className="absolute top-2.5 right-2.5 z-10">
+        {/* Status badge + Overstay warning */}
+        <div className="absolute top-2.5 right-2.5 z-10 flex gap-1">
+          {isOverstayed && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 bg-rose-600 text-white rounded-lg text-[8px] font-bold shadow-sm animate-pulse">
+              <Clock className="w-2.5 h-2.5" /> OVERSTAY
+            </span>
+          )}
           <StatusChip status={room.status} />
         </div>
         
@@ -119,6 +125,7 @@ export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbo
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/80 backdrop-blur-md rounded-xl shadow-sm border border-white/10">
               <User className="w-3.5 h-3.5 text-brand-300" />
               <span className="text-[10px] font-bold text-white truncate max-w-[150px]">{guestName}</span>
+              {isOverstayed && <Clock className="w-3 h-3 text-rose-400 flex-shrink-0 animate-pulse" />}
             </div>
           </div>
         )}

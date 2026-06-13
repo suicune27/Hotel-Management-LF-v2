@@ -84,6 +84,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
       return [];
     }
   });
+  const [showShortcuts, setShowShortcuts] = useState(false);
   // Dialogs
   const [checkInDialog, setCheckInDialog] = useState<{ room: Room; mode?: 'checkin' | 'reservation'; booking?: Booking } | null>(null);
   const [checkOutDialog, setCheckOutDialog] = useState<{ room: Room } | null>(null);
@@ -201,6 +202,72 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   // Clock
   const [clock, setClock] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
+
+  // Keyboard shortcuts for Front Desk
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
+
+      switch (e.key) {
+        case 'n':
+        case 'N':
+          if (!e.ctrlKey && !e.metaKey) break;
+          e.preventDefault();
+          document.getElementById('new-checkin-btn')?.click();
+          break;
+        case 'f':
+        case 'F':
+          if (!e.ctrlKey && !e.metaKey) break;
+          e.preventDefault();
+          const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="Search"]');
+          searchInput?.focus();
+          break;
+        case 'r':
+        case 'R':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            setActiveTab('reports');
+          }
+          break;
+        case '1':
+          if (!e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            setActiveTab('rooms');
+          }
+          break;
+        case '2':
+          if (!e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            setActiveTab('reports');
+          }
+          break;
+        case '3':
+          if (!e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            setActiveTab('orders');
+          }
+          break;
+        case 'Escape':
+          if (selectedRoom) {
+            setSelectedRoom(null as any);
+            setBookingsModal(null);
+            setCheckOutDialog(null);
+            setCheckInDialog(null);
+            setPaymentDialog(null);
+            setInvoiceDialog(null);
+            setShowPos(false);
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          setShowShortcuts(p => !p);
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedRoom, setActiveTab]);
 
   const showSuccess = (msg: string) => {
     const id = Date.now().toString();
@@ -1915,6 +1982,9 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                       <h2 className="text-xs font-bold text-surface-900">Rooms</h2>
                     </div>
                     <div className="flex items-center gap-1.5 text-[9px]">
+                      <button id="new-checkin-btn" onClick={() => setSearchOpen(true)} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1">
+                        <UserPlus className="w-3 h-3" /><span>Check In</span>
+                      </button>
                       <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">{statCounts.available} free</span>
                       <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">{statCounts.booked} occupied</span>
                       {overstayedRoomIds.size > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-bold">{overstayedRoomIds.size} overstayed</span>}
@@ -3457,6 +3527,23 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
             </div>
             <div className="bg-rose-50 border border-rose-100 rounded-xl p-4"><p className="text-xs text-rose-800 font-mono leading-relaxed break-words">{errorDialog.message}</p></div>
             <button onClick={() => { setErrorDialog(null); loadAll(); }} className="w-full py-3 bg-surface-900 hover:bg-surface-800 text-white rounded-xl text-xs font-bold cursor-pointer transition-all">Dismiss & Refresh</button>
+          </div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcuts Help */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-900/30 backdrop-blur-sm" onClick={() => setShowShortcuts(false)}>
+          <div className="bg-white rounded-2xl border border-surface-100 shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-surface-900 mb-4">Keyboard Shortcuts</h3>
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+N</kbd><span className="text-surface-500">New Check-in</span></div>
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+F</kbd><span className="text-surface-500">Search rooms</span></div>
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+R</kbd><span className="text-surface-500">Reports</span></div>
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">1 / 2 / 3</kbd><span className="text-surface-500">Switch tabs</span></div>
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Esc</kbd><span className="text-surface-500">Close panels</span></div>
+              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">?</kbd><span className="text-surface-500">Toggle this help</span></div>
+            </div>
           </div>
         </div>
       )}

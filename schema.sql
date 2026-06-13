@@ -940,7 +940,7 @@ DROP TRIGGER IF EXISTS trigger_compute_customer_stats ON public.bookings;
 CREATE TRIGGER trigger_compute_customer_stats
   AFTER INSERT OR UPDATE OF status ON public.bookings
   FOR EACH ROW
-  WHEN (NEW.status IN ('checked-out', 'cancelled') OR OLD.status IN ('checked-out', 'cancelled'))
+  WHEN (NEW.status IN ('checked-out', 'cancelled'))
   EXECUTE FUNCTION public.compute_customer_stats();
 
 CREATE OR REPLACE VIEW public.customer_loyalty_tiers AS
@@ -993,14 +993,122 @@ CREATE TABLE IF NOT EXISTS public.lost_found_items (
 
 ALTER TABLE public.lost_found_items ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow all authenticated users to read lost_found_items"
-  ON public.lost_found_items FOR SELECT TO authenticated USING (true);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to read lost_found_items') THEN CREATE POLICY "Allow all authenticated users to read lost_found_items" ON public.lost_found_items FOR SELECT TO authenticated USING (true); END IF; END $$;
 
-CREATE POLICY "Allow all authenticated users to insert lost_found_items"
-  ON public.lost_found_items FOR INSERT TO authenticated WITH CHECK (true);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to insert lost_found_items') THEN CREATE POLICY "Allow all authenticated users to insert lost_found_items" ON public.lost_found_items FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
 
-CREATE POLICY "Allow all authenticated users to update lost_found_items"
-  ON public.lost_found_items FOR UPDATE TO authenticated USING (true);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to update lost_found_items') THEN CREATE POLICY "Allow all authenticated users to update lost_found_items" ON public.lost_found_items FOR UPDATE TO authenticated USING (true); END IF; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_lost_found_status ON public.lost_found_items(status);
 CREATE INDEX IF NOT EXISTS idx_lost_found_category ON public.lost_found_items(category);
+
+-- ==========================================
+-- 17. SOFT DELETE COLUMNS (idempotent)
+-- ==========================================
+
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.guest_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.booking_charges ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.housekeeping_tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.incidents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.parking_spots ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.contact_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.staff_calls ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.inventory_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.lost_found_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+
+-- ==========================================
+-- 18. VERSION COLUMNS FOR CONCURRENCY CONTROL
+-- ==========================================
+
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.guest_orders ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.housekeeping_tasks ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+
+-- ==========================================
+-- 19. SHIFT MANAGEMENT TABLES
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS public.shift_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    break_duration INTEGER NOT NULL DEFAULT 0,
+    description TEXT DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_shift_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    shift_template_id UUID REFERENCES public.shift_templates(id) ON DELETE SET NULL,
+    custom_start_time TIME,
+    custom_end_time TIME,
+    effective_from DATE NOT NULL,
+    effective_to DATE,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Partial unique index: only one active assignment per user at a time
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_shift_assignments_active ON public.employee_shift_assignments (user_id) WHERE is_active = true;
+
+CREATE TABLE IF NOT EXISTS public.shift_assignment_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    shift_template_id UUID REFERENCES public.shift_templates(id) ON DELETE SET NULL,
+    custom_start_time TIME,
+    custom_end_time TIME,
+    effective_from DATE NOT NULL,
+    effective_to DATE,
+    changed_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    change_reason TEXT DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Seed default shift templates
+INSERT INTO public.shift_templates (name, start_time, end_time, break_duration, description) VALUES
+    ('Morning', '07:00', '15:00', 30, 'Morning shift — 7 AM to 3 PM with 30-min break'),
+    ('Afternoon', '15:00', '23:00', 30, 'Afternoon shift — 3 PM to 11 PM with 30-min break'),
+    ('Night', '23:00', '07:00', 30, 'Night shift — 11 PM to 7 AM with 30-min break'),
+    ('Graveyard', '22:00', '06:00', 45, 'Graveyard shift — 10 PM to 6 AM with 45-min break')
+ON CONFLICT DO NOTHING;
+
+-- RLS: only admins can manage shift templates and assignments
+ALTER TABLE public.shift_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.employee_shift_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shift_assignment_history ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admin full access on shift_templates" ON public.shift_templates;
+CREATE POLICY "Admin full access on shift_templates" ON public.shift_templates
+    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
+    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "All authenticated can view shift_templates" ON public.shift_templates;
+CREATE POLICY "All authenticated can view shift_templates" ON public.shift_templates
+    FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Admin full access on employee_shift_assignments" ON public.employee_shift_assignments;
+CREATE POLICY "Admin full access on employee_shift_assignments" ON public.employee_shift_assignments
+    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
+    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "All authenticated can view employee_shift_assignments" ON public.employee_shift_assignments;
+CREATE POLICY "All authenticated can view employee_shift_assignments" ON public.employee_shift_assignments
+    FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Admin full access on shift_assignment_history" ON public.shift_assignment_history;
+CREATE POLICY "Admin full access on shift_assignment_history" ON public.shift_assignment_history
+    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
+    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "All authenticated can view shift_assignment_history" ON public.shift_assignment_history;
+CREATE POLICY "All authenticated can view shift_assignment_history" ON public.shift_assignment_history
+    FOR SELECT USING (auth.role() = 'authenticated');

@@ -106,16 +106,22 @@ export default function ShiftScheduleTab({
             });
           });
           const seedRecords = seededShifts.map(s => ({
-            id: s.id,
             day: s.day,
             time_label: s.timeLabel,
             assigned_user_id: s.assignedUserId,
             role: s.role,
             status: s.status,
           }));
-          const { error: insertError } = await supabase.from('shift_schedules').insert(seedRecords);
+          const { data: insertedData, error: insertError } = await supabase.from('shift_schedules').insert(seedRecords).select();
           if (insertError) throw insertError;
-          loadedShifts = seededShifts;
+          loadedShifts = (insertedData || []).map((s: any) => ({
+            id: s.id,
+            day: s.day,
+            timeLabel: s.time_label,
+            assignedUserId: s.assigned_user_id,
+            role: s.role,
+            status: s.status,
+          }));
         }
 
         const { data: swapData, error: swapError } = await supabase.from('shift_swaps').select('*');
@@ -166,7 +172,8 @@ export default function ShiftScheduleTab({
   const syncSwaps = async (newSwaps: SwapRequest[]) => {
     setSwaps(newSwaps);
     try {
-      const records = newSwaps.map(s => ({
+      // Separate existing DB records (UUID ids) from new ones (string ids)
+      const existingRecords = newSwaps.filter(s => /^[0-9a-f]{8}-/i.test(s.id)).map(s => ({
         id: s.id,
         source_shift_id: s.sourceShiftId,
         requesting_user_id: s.requestingUserId,
@@ -175,8 +182,36 @@ export default function ShiftScheduleTab({
         status: s.status,
         created_at: s.created_at,
       }));
-      const { error } = await supabase.from('shift_swaps').upsert(records, { onConflict: 'id' });
-      if (error) throw error;
+      const newRecords = newSwaps.filter(s => !/^[0-9a-f]{8}-/i.test(s.id)).map(s => ({
+        source_shift_id: s.sourceShiftId,
+        requesting_user_id: s.requestingUserId,
+        target_user_id: s.targetUserId,
+        notes: s.notes,
+        status: s.status,
+        created_at: s.created_at,
+      }));
+      if (existingRecords.length > 0) {
+        const { error } = await supabase.from('shift_swaps').upsert(existingRecords, { onConflict: 'id' });
+        if (error) throw error;
+      }
+      if (newRecords.length > 0) {
+        const { data: insertedData, error } = await supabase.from('shift_swaps').insert(newRecords).select();
+        if (error) throw error;
+        if (insertedData) {
+          const mapped: SwapRequest[] = insertedData.map((s: any) => ({
+            id: s.id,
+            sourceShiftId: s.source_shift_id,
+            requestingUserId: s.requesting_user_id,
+            targetUserId: s.target_user_id,
+            notes: s.notes,
+            status: s.status,
+            created_at: s.created_at,
+          }));
+          // Replace just the new items with their DB versions
+          const updated = newSwaps.map(s => (/^[0-9a-f]{8}-/i.test(s.id) ? s : mapped.shift()!));
+          setSwaps(updated);
+        }
+      }
     } catch (err) {
       // console.error('Failed to sync swaps:', err);
       showError('Sync Error', 'Could not save swap changes to database.');

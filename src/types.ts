@@ -377,6 +377,44 @@ export interface SalaryAdjustment {
   created_at: string;
 }
 
+export interface ShiftTemplate {
+  id: string;
+  name: string;
+  start_time: string;
+  end_time: string;
+  break_duration: number;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface EmployeeShiftAssignment {
+  id: string;
+  user_id: string;
+  shift_template_id: string | null;
+  custom_start_time: string | null;
+  custom_end_time: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  is_active: boolean;
+  created_at: string;
+  shift_templates?: ShiftTemplate;
+  users?: Profile;
+}
+
+export interface ShiftAssignmentHistory {
+  id: string;
+  user_id: string;
+  shift_template_id: string | null;
+  custom_start_time: string | null;
+  custom_end_time: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  changed_by: string;
+  change_reason: string;
+  created_at: string;
+}
+
 export interface BookingGroup {
   id: string;
   name: string;

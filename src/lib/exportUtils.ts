@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { applyPlugin } from 'jspdf-autotable';
+applyPlugin(jsPDF);
 import { Booking, Customer, ActivityLog, Room, GuestOrder } from '../types';
 
 // Extend jsPDF with autotable

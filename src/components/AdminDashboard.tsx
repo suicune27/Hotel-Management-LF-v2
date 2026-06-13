@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
-import { Room, Booking, Profile, Customer, ActivityLog, MenuCategory, InventoryItem, GuestOrder, StaffCall, StayExtension, ChatMessage, ChatTyping, ContactMessage, EmployeePayroll, TimeEntry, PayrollPeriod, PayrollEntry, HousekeepingTask, PromoCode, RatePlan, WaitlistEntry, Incident, ParkingSpot, BookingGroup } from '../types';
+import { Room, Booking, Profile, Customer, ActivityLog, MenuCategory, InventoryItem, GuestOrder, StaffCall, StayExtension, ChatMessage, ChatTyping, ContactMessage, EmployeePayroll, TimeEntry, PayrollPeriod, PayrollEntry, HousekeepingTask, PromoCode, RatePlan, WaitlistEntry, Incident, ParkingSpot, BookingGroup, ShiftTemplate, EmployeeShiftAssignment } from '../types';
 import { AlertDialog, ConfirmDialog } from './AlertDialog';
 import { ToastContainer } from './Toast';
 import type { ToastMessage } from './Toast';
@@ -12,7 +12,7 @@ import NotificationBell, { type AppNotification } from './NotificationBell';
 import { exportToCSV, exportBookingsToPDF, exportRevenueToPDF, exportLogsToPDF, exportRoomsToPDF, exportOrdersToPDF, exportAttendanceToPDF } from '../lib/exportUtils';
 import { fileToBase64, isValidImageType } from '../lib/imageUpload';
 import { 
-  BarChart3, Building, BookOpen, UserCheck, Users, Activity, Sparkles, DollarSign, CreditCard,
+  BarChart3, Building, BookOpen, UserCheck, Users, Activity, Info, Sparkles, DollarSign, CreditCard,
   Plus, Trash2, Check, X, Calendar, Edit3, Key, LogOut, Loader2, RefreshCw, Layers, Settings, AlertTriangle, Clock,
   Package, ShoppingCart, AlertCircle, Minus, Bell, MessageSquareText, Send, ChevronDown, ChevronUp, Mail, Search, ChevronLeft, ChevronRight, Phone, Eye, Filter, UserPlus, Tag, TrendingUp, Grid3X3, FileText, Download, ImageUp, ListChecks, Percent, ClipboardList,
   Printer, FileSpreadsheet, SprayCan, Utensils, Zap
@@ -33,6 +33,8 @@ import AdminHousekeepingTab from './admin/AdminHousekeepingTab';
 import AdminReportsTab from './admin/AdminReportsTab';
 import AdminMaintenanceTab from './admin/AdminMaintenanceTab';
 import AdminLostFoundTab from './admin/AdminLostFoundTab';
+import AdminBackupTab from './admin/AdminBackupTab';
+import AdminShiftManagement from './admin/AdminShiftManagement';
 
 interface AdminDashboardProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard') => void;
@@ -41,7 +43,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions' | 'housekeeping' | 'reports' | 'maintenance' | 'lost_found';
+type AdminTab = 'insights' | 'rooms' | 'bookings' | 'workforce' | 'guests' | 'audit_logs' | 'inventory' | 'staff_calls' | 'stay_extensions' | 'front_desk_chat' | 'messages' | 'qr_codes' | 'settings' | 'promotions' | 'housekeeping' | 'reports' | 'maintenance' | 'lost_found' | 'backup';
 
 function generateAllDaySlots(): string[] {
   const slots: string[] = [];
@@ -122,11 +124,13 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
+  const [shiftTemplates, setShiftTemplates] = useState<ShiftTemplate[]>([]);
+  const [employeeShiftAssignments, setEmployeeShiftAssignments] = useState<EmployeeShiftAssignment[]>([]);
   const [employeePayrolls, setEmployeePayrolls] = useState<EmployeePayroll[]>([]);
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
   const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[]>([]);
   const [payrollEntries, setPayrollEntries] = useState<PayrollEntry[]>([]);
-  const [wfSubTab, setWfSubTab] = useState<'directory' | 'time' | 'payroll' | 'shifts'>('directory');
+  const [wfSubTab, setWfSubTab] = useState<'directory' | 'time' | 'payroll' | 'shifts' | 'shift_templates'>('directory');
   const [payrollModal, setPayrollModal] = useState<null | 'payroll' | 'time' | 'period' | 'run'>(null);
   const [selectedPayrollEmp, setSelectedPayrollEmp] = useState<string | null>(null);
   const [payrollRateForm, setPayrollRateForm] = useState({ hourly_rate: 0, overtime_rate: 0, pay_frequency: 'weekly' as 'weekly' | 'bi-weekly' | 'monthly', employment_type: 'regular' as 'regular' | 'probationary' | 'contractual' | 'seasonal' | 'part-time' | 'casual', hire_date: '', tax_id: '', bank_account: '', remarks: '' });
@@ -253,7 +257,8 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
-  const [expandedRoomBookings, setExpandedRoomBookings] = useState<Set<string>>(new Set());
+  const [roomHistoryModal, setRoomHistoryModal] = useState<{ room: Room; page: number } | null>(null);
+  const ROOM_HISTORY_PAGE_SIZE = 5;
   const [guestShowAll, setGuestShowAll] = useState(false);
   const [guestDateFrom, setGuestDateFrom] = useState('');
   const [guestDateTo, setGuestDateTo] = useState('');
@@ -272,6 +277,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const [logPage, setLogPage] = useState(0);
   const [logHasMore, setLogHasMore] = useState(true);
   const LOG_PAGE_SIZE = 20;
+  const PAGE_SIZE = 200;
 
   // Toast notifications
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -406,6 +412,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const [bookingStaffEdit, setBookingStaffEdit] = useState('');
   // Booking Detail Modal
   const [selectedBookingDetail, setSelectedBookingDetail] = useState<Booking | null>(null);
+  const [bookingDetailTab, setBookingDetailTab] = useState<'info' | 'orders' | 'logs'>('info');
   const [bookingFilter, setBookingFilter] = useState<string>('all');
   const [bookingSearch, setBookingSearch] = useState('');
 
@@ -416,7 +423,8 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
     full_name: '',
     email: '',
     password: '',
-    role: 'staff' as 'admin' | 'front_desk' | 'cook' | 'cleaner' | 'staff' | 'waiter'
+    role: 'staff' as 'admin' | 'front_desk' | 'cook' | 'cleaner' | 'staff' | 'waiter',
+    shift_template_id: '' as string,
   });
 
   // Inventory CRUD states
@@ -593,7 +601,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
     try {
       switch (table) {
         case 'rooms':
-          const { data: roomsD } = await supabase.from('rooms').select('*, hotels(*)').order('room_number', { ascending: true });
+          const { data: roomsD } = await supabase.from('rooms').select('*').order('room_number', { ascending: true });
           if (roomsD) setRooms(roomsD);
           break;
         case 'bookings':
@@ -681,6 +689,14 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           const { data: pkD } = await supabase.from('parking_spots').select('*, bookings(*)').order('spot_number', { ascending: true });
           if (pkD) setParkingSpots(pkD);
           break;
+        case 'shift_templates':
+          const { data: stD } = await supabase.from('shift_templates').select('*').order('name', { ascending: true });
+          if (stD) setShiftTemplates(stD);
+          break;
+        case 'employee_shift_assignments':
+          const { data: esaD } = await supabase.from('employee_shift_assignments').select('*, shift_templates(*)').eq('is_active', true);
+          if (esaD) setEmployeeShiftAssignments(esaD);
+          break;
     }
     } catch (err: any) {
       // console.error("refreshTable error:", err);
@@ -691,14 +707,20 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const loadDatabase = async () => {
     setLoading(true);
     try {
-      // 0. Fetch hotel ID dynamically
+      // 0. Fetch hotel ID dynamically (isolated — failure won't block data load)
       if (!hotelId) {
-        const { data: hotelsD } = await supabase.from('hotels').select('id').limit(1).maybeSingle();
-        if (hotelsD) setHotelId(hotelsD.id);
+        try {
+          const { data: hotelsD } = await supabase.from('hotels').select('id').limit(1).maybeSingle();
+          if (hotelsD) setHotelId(hotelsD.id);
+        } catch {}
       }
 
-      // Hydrate settings from Supabase (not localStorage)
-      const dbSettings = await fetchSettingsFromSupabase();
+      // Hydrate settings from Supabase (isolated — failure uses defaults)
+      let dbSettings = settings;
+      try {
+        const s = await fetchSettingsFromSupabase();
+        if (s) dbSettings = s;
+      } catch {}
       const allSlots = generateAllDaySlots();
       if (!dbSettings.checkInTimes?.length) dbSettings.checkInTimes = [...allSlots];
       if (!dbSettings.checkOutTimes?.length) dbSettings.checkOutTimes = [...allSlots];
@@ -723,38 +745,49 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
         setShiftStartTime(dbSettings.shiftStartTime);
       }
 
-      const [roomsD, bookingsD, staffD, customersD, logsD, categoriesD, itemsD, ordersD, callsD, extsD, chatsD, contactsD, empPayrollsD, timeEntsD, payrollPerD, payrollEntsD, housekeepingTasksD, promoCodesD, ratePlansD, waitlistD, incidentsD, parkingSpotsD] = await Promise.all([
-        supabase.from('rooms').select('*, hotels(*)').order('room_number', { ascending: true }),
-        supabase.from('bookings').select('*, rooms(*), customers(*), profiles:users(*)').order('created_at', { ascending: false }),
-        supabase.from('users').select('*').order('full_name', { ascending: true }),
-        supabase.from('customers').select('*').order('created_at', { ascending: false }),
-        supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(LOG_PAGE_SIZE),
-        supabase.from('menu_categories').select('*').order('name', { ascending: true }),
-        supabase.from('inventory_items').select('*, menu_categories(*)').order('name', { ascending: true }),
-        supabase.from('guest_orders').select('*, inventory_items(*), bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }),
-        supabase.from('staff_calls').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }),
-        supabase.from('stay_extensions').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }),
-        supabase.from('chat_messages').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }),
-        supabase.from('contact_messages').select('*').order('created_at', { ascending: false }),
-        supabase.from('employee_payroll').select('*, users(*)'),
-        supabase.from('time_entries').select('*, users!time_entries_user_id_fkey(*)').order('clock_in', { ascending: false }),
-        supabase.from('payroll_periods').select('*').order('start_date', { ascending: false }),
-        supabase.from('payroll_entries').select('*, payroll_periods(*), users(*)').order('created_at', { ascending: false }),
-        supabase.from('housekeeping_tasks').select('*, rooms(*), users(*)').order('created_at', { ascending: false }),
-        supabase.from('promo_codes').select('*').order('created_at', { ascending: false }),
-        supabase.from('rate_plans').select('*').order('created_at', { ascending: false }),
-        supabase.from('waitlist').select('*').order('created_at', { ascending: false }),
-        supabase.from('incidents').select('*, rooms(*)').order('created_at', { ascending: false }),
-        supabase.from('parking_spots').select('*, bookings(*)').order('spot_number', { ascending: true }),
+      const safeFetch = async (p: any) => {
+        try {
+          const res = await p;
+          if (res?.error) console.error('[safeFetch] query error:', res.error);
+          return res;
+        } catch (e) { console.error('[safeFetch] throw:', e); return { data: null, error: null }; }
+      };
+
+      const [roomsD, bookingsD, staffD, customersD, logsD, categoriesD, itemsD, ordersD, callsD, extsD, chatsD, contactsD, empPayrollsD, timeEntsD, payrollPerD, payrollEntsD, housekeepingTasksD, promoCodesD, ratePlansD, waitlistD, incidentsD, parkingSpotsD, shiftTemplatesD, shiftAssignmentsD] = await Promise.all([
+        safeFetch(supabase.from('rooms').select('*').order('room_number', { ascending: true })),
+        safeFetch(supabase.from('bookings').select('*, rooms(*), customers(*), profiles:users(*)').order('created_at', { ascending: false }).range(0, PAGE_SIZE - 1)),
+        safeFetch(supabase.from('users').select('*').order('full_name', { ascending: true })),
+        safeFetch(supabase.from('customers').select('*').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).range(0, PAGE_SIZE - 1)),
+        safeFetch(supabase.from('menu_categories').select('*').order('name', { ascending: true })),
+        safeFetch(supabase.from('inventory_items').select('*, menu_categories(*)').order('name', { ascending: true })),
+        safeFetch(supabase.from('guest_orders').select('*, inventory_items(*), bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }).range(0, PAGE_SIZE - 1)),
+        safeFetch(supabase.from('staff_calls').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('stay_extensions').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('chat_messages').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('contact_messages').select('*').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('employee_payroll').select('*, users(*)')),
+        safeFetch(supabase.from('time_entries').select('*, users!time_entries_user_id_fkey(*)').order('clock_in', { ascending: false })),
+        safeFetch(supabase.from('payroll_periods').select('*').order('start_date', { ascending: false })),
+        safeFetch(supabase.from('payroll_entries').select('*, payroll_periods(*), users(*)').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('housekeeping_tasks').select('*, rooms(*), users(*)').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('promo_codes').select('*').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('rate_plans').select('*').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('waitlist').select('*').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('incidents').select('*, rooms(*)').order('created_at', { ascending: false })),
+        safeFetch(supabase.from('parking_spots').select('*, bookings(*)').order('spot_number', { ascending: true })),
+        safeFetch(supabase.from('shift_templates').select('*').order('name', { ascending: true })),
+        safeFetch(supabase.from('employee_shift_assignments').select('*, shift_templates(*)').eq('is_active', true)),
       ]);
 
       if (chatsD.error) // console.error('chat_messages initial load error:', chatsD.error);
 
+      console.log('[rooms] response:', roomsD?.data?.length, 'rooms, error:', roomsD?.error);
       if (roomsD.data) setRooms(roomsD.data);
       if (bookingsD.data) setBookings(bookingsD.data);
       if (staffD.data) setEmployees(staffD.data.filter((p: Profile) => p.role === 'admin' || p.role === 'front_desk' || p.role === 'cook' || p.role === 'cleaner' || p.role === 'staff' || p.role === 'waiter' || p.role === 'employee'));
       if (customersD.data) setCustomers(customersD.data);
-      if (logsD.data) { setLogs(logsD.data); setLogPage(0); setLogHasMore(logsD.data.length >= LOG_PAGE_SIZE); }
+      if (logsD.data) { setLogs(logsD.data); setLogPage(0); setLogHasMore(logsD.data.length >= PAGE_SIZE); }
       if (categoriesD.data) setMenuCategories(categoriesD.data);
       if (itemsD.data) setInventoryItems(itemsD.data);
       if (ordersD.data) setGuestOrders(ordersD.data);
@@ -776,6 +809,8 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       if (waitlistD.data) setWaitlist(waitlistD.data);
       if (incidentsD.data) setIncidents(incidentsD.data);
       if (parkingSpotsD.data) setParkingSpots(parkingSpotsD.data);
+      if (shiftTemplatesD.data) setShiftTemplates(shiftTemplatesD.data);
+      if (shiftAssignmentsD.data) setEmployeeShiftAssignments(shiftAssignmentsD.data);
       const { data: bookingGroupsD } = await supabase.from('booking_groups').select('*').order('created_at', { ascending: false });
       if (bookingGroupsD) setBookingGroups(bookingGroupsD);
     } catch (err) {
@@ -1227,6 +1262,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
     setBookingStatusEdit(booking.status);
     setBookingStaffEdit(booking.assigned_employee_id || '');
     setSelectedBookingDetail(booking);
+    setBookingDetailTab('info');
   };
 
   const handleBookingUpdateSave = async (booking: Booking) => {
@@ -1271,12 +1307,17 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   const handleQuickCheckIn = async (booking: Booking) => {
     try {
       const newStatus = booking.status === 'checked-in' ? 'confirmed' : 'checked-in';
-      const { error } = await supabase
-        .from('bookings')
-        .update({ status: newStatus })
-        .eq('id', booking.id);
-
+      const bookingVersion = (booking as any).version;
+      let updateQuery = supabase.from('bookings').update({ status: newStatus }).eq('id', booking.id);
+      if (bookingVersion) {
+        updateQuery = updateQuery.eq('version', bookingVersion);
+      }
+      const { data: updateResult, error } = await updateQuery.select();
       if (error) throw error;
+      if (bookingVersion && (!updateResult || updateResult.length === 0)) {
+        triggerAlert('Conflict Error', 'This booking was modified by another user. Please refresh and try again.');
+        return;
+      }
 
       // Sync room status
       if (newStatus === 'checked-in') {
@@ -1312,13 +1353,14 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   // Employee CRUD Handles
   const handleOpenEmployeeCreate = () => {
     setSelectedEmployee(null);
-    setEmployeeForm({ full_name: '', email: '', password: '', role: 'staff' });
+    setEmployeeForm({ full_name: '', email: '', password: '', role: 'staff', shift_template_id: '' });
     setEmployeeModal('create');
   };
 
   const handleOpenEmployeeEdit = (emp: Profile) => {
     setSelectedEmployee(emp);
-    setEmployeeForm({ full_name: emp.full_name, email: emp.email, password: '', role: emp.role as 'admin' | 'front_desk' | 'cook' | 'cleaner' | 'staff' | 'waiter' });
+    const existingAssignment = employeeShiftAssignments.find(a => a.user_id === emp.id);
+    setEmployeeForm({ full_name: emp.full_name, email: emp.email, password: '', role: emp.role as 'admin' | 'front_desk' | 'cook' | 'cleaner' | 'staff' | 'waiter', shift_template_id: existingAssignment?.shift_template_id || '' });
     setEmployeeModal('edit');
   };
 
@@ -1335,6 +1377,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
         }
 
         (window as any).__opencode_suppressAuthRedirect = true;
+        let newUserId: string | undefined;
         try {
           // Save the current admin session BEFORE signUp replaces it
           const { data: { session: adminSession } } = await supabase.auth.getSession();
@@ -1354,6 +1397,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
 
           if (authError) throw authError;
           if (!authData.user) throw new Error('Failed to create user account.');
+          newUserId = authData.user.id;
 
           // Directly insert/upsert the public.users record.
           const { error: upsertError } = await supabase
@@ -1386,6 +1430,16 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           details: `${employeeForm.full_name} (${employeeForm.role}) added to workforce`
         });
 
+        // Save shift assignment if selected
+        if (employeeForm.shift_template_id && newUserId) {
+          await supabase.from('employee_shift_assignments').insert({
+            user_id: newUserId,
+            shift_template_id: employeeForm.shift_template_id,
+            effective_from: new Date().toISOString().split('T')[0],
+            is_active: true,
+          });
+        }
+
         addToast('success', 'Employee Created', `${employeeForm.full_name} added as ${employeeForm.role}.`);
       } else if (employeeModal === 'edit' && selectedEmployee) {
         const { error } = await supabase
@@ -1394,6 +1448,32 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
           .eq('id', selectedEmployee.id);
 
         if (error) throw error;
+
+        // Update shift assignment
+        const existingAssignment = employeeShiftAssignments.find(a => a.user_id === selectedEmployee.id);
+        if (employeeForm.shift_template_id) {
+          if (existingAssignment) {
+            if (existingAssignment.shift_template_id !== employeeForm.shift_template_id) {
+              // Deactivate old, create new
+              await supabase.from('employee_shift_assignments').update({ is_active: false, effective_to: new Date().toISOString().split('T')[0] }).eq('id', existingAssignment.id);
+              await supabase.from('employee_shift_assignments').insert({
+                user_id: selectedEmployee.id,
+                shift_template_id: employeeForm.shift_template_id,
+                effective_from: new Date().toISOString().split('T')[0],
+                is_active: true,
+              });
+            }
+          } else {
+            await supabase.from('employee_shift_assignments').insert({
+              user_id: selectedEmployee.id,
+              shift_template_id: employeeForm.shift_template_id,
+              effective_from: new Date().toISOString().split('T')[0],
+              is_active: true,
+            });
+          }
+        } else if (existingAssignment) {
+          await supabase.from('employee_shift_assignments').update({ is_active: false, effective_to: new Date().toISOString().split('T')[0] }).eq('id', existingAssignment.id);
+        }
 
         await supabase.from('activity_logs').insert({
           user_id: userProfile?.id,
@@ -1564,6 +1644,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   // Guest order placement
   const handleOpenOrderCreate = (booking: Booking) => {
     setSelectedBookingDetail(booking);
+    setBookingDetailTab('info');
     setOrderForm({ item_id: inventoryItems[0]?.id || '', quantity: 1, notes: '' });
     setInventoryModal('order');
   };
@@ -2623,20 +2704,10 @@ Confirm this change?`,
                           <tbody className="divide-y divide-surface-100 font-sans tracking-tight text-surface-700">
                             {rooms.map((room) => {
                               const roomBookings = bookings.filter(b => b.room_id === room.id);
-                              const isExpanded = expandedRoomBookings.has(room.id);
                               return (
-                                <React.Fragment key={room.id}>
-                                  <tr
-                                    onClick={() => {
-                                      const next = new Set(expandedRoomBookings);
-                                      if (isExpanded) next.delete(room.id);
-                                      else next.add(room.id);
-                                      setExpandedRoomBookings(next);
-                                    }}
-                                    className={`hover:bg-surface-50/50 cursor-pointer transition-colors ${isExpanded ? 'bg-brand-50/30' : ''}`}
-                                  >
+                                  <React.Fragment key={room.id}>
+                                    <tr onClick={() => setRoomHistoryModal({ room, page: 0 })} className="hover:bg-surface-50/50 transition-colors cursor-pointer">
                                     <td className="p-4 font-mono font-bold text-surface-900 flex items-center gap-2">
-                                      <ChevronRight className={`w-3.5 h-3.5 text-surface-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                       Suite {room.room_number}
                                     </td>
                                     <td className="p-4 font-medium text-surface-900">
@@ -2663,8 +2734,18 @@ Confirm this change?`,
                                             return;
                                           }
                                           try {
-                                            const { error } = await supabase.from('rooms').update({ status: newStatus }).eq('id', room.id);
-                                            if (error) throw error;
+                                            const roomVersion = (room as any).version;
+                                            if (roomVersion) {
+                                              const { data: updateResult, error } = await supabase.from('rooms').update({ status: newStatus, version: roomVersion + 1 }).eq('id', room.id).eq('version', roomVersion).select();
+                                              if (error) throw error;
+                                              if (!updateResult || updateResult.length === 0) {
+                                                triggerAlert('Conflict Error', 'This room was modified by another user. Please refresh and try again.');
+                                                return;
+                                              }
+                                            } else {
+                                              const { error } = await supabase.from('rooms').update({ status: newStatus }).eq('id', room.id);
+                                              if (error) throw error;
+                                            }
                                             addToast('success', 'Status Updated', `Suite ${room.room_number} is now ${newStatus}`);
                                             loadDatabase();
                                           } catch (err: any) {
@@ -2686,7 +2767,7 @@ Confirm this change?`,
                                       </select>
                                     </td>
                                     <td className="p-4">
-                                      <span className="flex items-center gap-1.5 text-surface-500 font-semibold">
+                                      <span className="flex items-center gap-1.5 text-surface-500 font-semibold pointer-events-none">
                                         <BookOpen className="w-3.5 h-3.5" />
                                         <span>{roomBookings.length} booking{roomBookings.length !== 1 ? 's' : ''}</span>
                                       </span>
@@ -2731,53 +2812,6 @@ Confirm this change?`,
                                       </div>
                                     </td>
                                   </tr>
-                                  {isExpanded && (
-                                    <tr>
-                                      <td colSpan={7} className="p-0">
-                                        <div className="bg-surface-50/50 px-6 py-4 border-b border-surface-100">
-                                          {roomBookings.length === 0 ? (
-                                            <p className="text-xs text-surface-400 py-2">No bookings linked to this room.</p>
-                                          ) : (
-                                            <div className="space-y-2">
-                                              <p className="text-[10px] font-bold uppercase tracking-wider text-surface-400 mb-2">Reservation History</p>
-                                              {roomBookings.map((b) => (
-                                                <button
-                                                  key={b.id}
-                                                  onClick={(e) => { e.stopPropagation(); setSelectedBookingDetail(b); }}
-                                                  className="w-full flex items-center justify-between bg-white rounded-lg px-4 py-2.5 border border-surface-100 text-xs hover:border-brand-200 hover:shadow-sm transition-all text-left cursor-pointer">
-                                                  <div className="flex items-center gap-3 flex-1">
-                                                    <span className="font-semibold text-surface-900 min-w-[110px]">{b.customers?.full_name || 'Unknown Guest'}</span>
-                                                    <span className="text-surface-400 text-[10px]">
-                                                      {b.check_in_date} —†’ {b.check_out_date}
-                                                    </span>
-                                                    <span className="font-mono font-semibold text-surface-900">
-                                                      {settings.currencySymbol}{b.total_price}
-                                                    </span>
-                                                  </div>
-                                                  <div className="flex items-center gap-2">
-                                                    {(() => {
-                                                      const orderCount = guestOrders.filter(o => o.booking_id === b.id).length;
-                                                      if (orderCount > 0) return <span className="px-1.5 py-0.5 bg-sky-50 text-sky-700 rounded text-[8px] font-bold">{orderCount} order{orderCount > 1 ? 's' : ''}</span>;
-                                                      return null;
-                                                    })()}
-                                                    <span className={`px-2 py-0.5 font-bold uppercase text-[9px] rounded-full ${
-                                                      b.status === 'confirmed' || b.status === 'checked-in'
-                                                        ? 'bg-emerald-50 text-emerald-700'
-                                                        : b.status === 'cancelled'
-                                                        ? 'bg-rose-50 text-rose-700'
-                                                        : 'bg-amber-50 text-amber-700'
-                                                    }`}>
-                                                      {b.status}
-                                                    </span>
-                                                  </div>
-                                                </button>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  )}
                                 </React.Fragment>
                               );
                             })}
@@ -3366,7 +3400,15 @@ Confirm this change?`,
                         <button onClick={async () => {
                           const toCheckIn = bookings.filter(b => selectedBookingIds.has(b.id) && b.status === 'confirmed');
                           for (const b of toCheckIn) {
-                            await supabase.from('bookings').update({ status: 'checked-in' }).eq('id', b.id);
+                            const bVersion = (b as any).version;
+                            let bQuery = supabase.from('bookings').update({ status: 'checked-in' }).eq('id', b.id);
+                            if (bVersion) bQuery = bQuery.eq('version', bVersion);
+                            const { data: bResult, error: bError } = await bQuery.select();
+                            if (bError) throw bError;
+                            if (bVersion && (!bResult || bResult.length === 0)) {
+                              addToast('error', 'Conflict', `Booking ${b.id} was modified. Skipping.`);
+                              continue;
+                            }
                             await supabase.from('rooms').update({ status: 'booked' }).eq('id', b.room_id);
                           }
                           await supabase.from('activity_logs').insert({ user_id: userProfile?.id, user_name: userProfile?.full_name || 'Admin', action: 'Bulk Check-In', details: `Checked in ${toCheckIn.length} guests` });
@@ -3377,7 +3419,15 @@ Confirm this change?`,
                         <button onClick={async () => {
                           const toCheckOut = bookings.filter(b => selectedBookingIds.has(b.id) && b.status === 'checked-in');
                           for (const b of toCheckOut) {
-                            await supabase.from('bookings').update({ status: 'completed' }).eq('id', b.id);
+                            const bVersion = (b as any).version;
+                            let bQuery = supabase.from('bookings').update({ status: 'completed' }).eq('id', b.id);
+                            if (bVersion) bQuery = bQuery.eq('version', bVersion);
+                            const { data: bResult, error: bError } = await bQuery.select();
+                            if (bError) throw bError;
+                            if (bVersion && (!bResult || bResult.length === 0)) {
+                              addToast('error', 'Conflict', `Booking ${b.id} was modified. Skipping.`);
+                              continue;
+                            }
                             await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', b.room_id);
                           }
                           await supabase.from('activity_logs').insert({ user_id: userProfile?.id, user_name: userProfile?.full_name || 'Admin', action: 'Bulk Check-Out', details: `Checked out ${toCheckOut.length} guests` });
@@ -3456,8 +3506,8 @@ Confirm this change?`,
                             const durationLabel = diffDays >= 1 ? `${diffDays} night${diffDays > 1 ? 's' : ''}` : `${diffHours} hour${diffHours > 1 ? 's' : ''}`;
 
                             return (
-                              <div key={booking.id} className={`bg-white rounded-2xl border shadow-sm transition-all ${isExpanded ? 'border-brand-200 shadow-md' : 'border-surface-100'}`}>
-                                {/* Card Header */}
+                              <button key={booking.id} onClick={() => { setSelectedBookingDetail(booking); setBookingDetailTab('info'); }}
+                                className={`w-full text-left bg-white rounded-2xl border shadow-sm transition-all hover:border-brand-200 hover:shadow-md cursor-pointer ${isExpanded ? 'border-brand-200 shadow-md' : 'border-surface-100'}`}>
                                 <div className="p-5">
                                   <div className="flex items-start justify-between gap-4">
                                     {/* Checkbox */}
@@ -3505,20 +3555,6 @@ Confirm this change?`,
                                         <span className="text-lg font-bold text-surface-900 font-mono">{settings.currencySymbol}{booking.total_price}</span>
                                         <span className="text-[9px] text-surface-400 block">{diffDays >= 1 ? `${settings.currencySymbol}${(Number(booking.total_price) / Math.max(1, diffDays)).toFixed(0)}/night` : `${settings.currencySymbol}${(Number(booking.total_price) / Math.max(1, diffHours)).toFixed(0)}/hr`}</span>
                                       </div>
-                                      <button
-                                        onClick={() => {
-                                          if (isExpanded) {
-                                            setSelectedBookingDetail(null);
-                                            setEditingBookingId(null);
-                                          } else {
-                                            setSelectedBookingDetail(booking);
-                                          }
-                                        }}
-                                        className="p-2 text-surface-400 hover:text-surface-600 hover:bg-surface-50 rounded-lg transition-colors cursor-pointer"
-                                        title={isExpanded ? 'Collapse' : 'Expand details'}
-                                      >
-                                        <Eye className="w-4 h-4" />
-                                      </button>
                                     </div>
                                   </div>
 
@@ -3559,7 +3595,17 @@ Confirm this change?`,
                                     {(booking.status === 'confirmed' || booking.status === 'pending') && (
                                       <button onClick={async () => {
                                         try {
-                                          await supabase.from('bookings').update({ status: 'checked-in' }).eq('id', booking.id);
+                                          const bookingVersion = (booking as any).version;
+                                          let checkInQuery = supabase.from('bookings').update({ status: 'checked-in' }).eq('id', booking.id);
+                                          if (bookingVersion) {
+                                            checkInQuery = checkInQuery.eq('version', bookingVersion);
+                                          }
+                                          const { data: checkInResult, error: checkInError } = await checkInQuery.select();
+                                          if (checkInError) throw checkInError;
+                                          if (bookingVersion && (!checkInResult || checkInResult.length === 0)) {
+                                            triggerAlert('Conflict Error', 'This booking was modified by another user. Please refresh and try again.');
+                                            return;
+                                          }
                                           await supabase.from('rooms').update({ status: 'booked' }).eq('id', booking.room_id);
                                           await supabase.from('activity_logs').insert({
                                             user_id: userProfile?.id, user_name: userProfile?.full_name || 'Admin',
@@ -3573,7 +3619,17 @@ Confirm this change?`,
                                     {booking.status === 'checked-in' && (
                                       <button onClick={async () => {
                                         try {
-                                          await supabase.from('bookings').update({ status: 'completed' }).eq('id', booking.id);
+                                          const bookingVersion = (booking as any).version;
+                                          let completeQuery = supabase.from('bookings').update({ status: 'completed' }).eq('id', booking.id);
+                                          if (bookingVersion) {
+                                            completeQuery = completeQuery.eq('version', bookingVersion);
+                                          }
+                                          const { data: completeResult, error: completeError } = await completeQuery.select();
+                                          if (completeError) throw completeError;
+                                          if (bookingVersion && (!completeResult || completeResult.length === 0)) {
+                                            triggerAlert('Conflict Error', 'This booking was modified by another user. Please refresh and try again.');
+                                            return;
+                                          }
                                           await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', booking.room_id);
                                           await supabase.from('activity_logs').insert({
                                             user_id: userProfile?.id, user_name: userProfile?.full_name || 'Admin',
@@ -3615,84 +3671,8 @@ Confirm this change?`,
                                   </div>
                                 </div>
 
-                                {/* Expanded Detail Panel */}
-                                {isExpanded && (
-                                  <div className="border-t border-surface-100 bg-surface-50/50 p-5 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                      {/* Status Editor */}
-                                      <div className="bg-white rounded-xl border border-surface-100 p-4 shadow-sm">
-                                        <span className="text-[9px] text-surface-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-3"><Activity className="w-3 h-3" /> Booking Status</span>
-                                        <select
-                                          value={isEditing ? bookingStatusEdit : booking.status}
-                                          onChange={(e) => { setBookingStatusEdit(e.target.value); if (!isEditing) { setEditingBookingId(booking.id); setBookingStatusEdit(e.target.value); setBookingStaffEdit(booking.assigned_employee_id || ''); } }}
-                                          className="w-full bg-surface-50 border border-surface-200 rounded-lg px-3 py-2 text-xs text-surface-800 focus:outline-none focus:border-brand-500 cursor-pointer"
-                                        >
-                                          <option value="pending">Pending</option>
-                                          <option value="confirmed">Confirmed</option>
-                                          <option value="checked-in">Checked-In</option>
-                                          <option value="completed">Completed</option>
-                                          <option value="cancelled">Cancelled</option>
-                                        </select>
-                                      </div>
-
-                                      {/* Staff Assignment */}
-                                      <div className="bg-white rounded-xl border border-surface-100 p-4 shadow-sm">
-                                        <span className="text-[9px] text-surface-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-3"><UserPlus className="w-3 h-3" /> Staff Assignment</span>
-                                        <select
-                                          value={isEditing ? bookingStaffEdit : (booking.assigned_employee_id || '')}
-                                          onChange={(e) => { setBookingStaffEdit(e.target.value); if (!isEditing) { setEditingBookingId(booking.id); setBookingStatusEdit(booking.status); setBookingStaffEdit(e.target.value); } }}
-                                          className="w-full bg-surface-50 border border-surface-200 rounded-lg px-3 py-2 text-xs text-surface-800 focus:outline-none focus:border-brand-500 cursor-pointer"
-                                        >
-                                          <option value="">Unassigned</option>
-                                          {employees.map(emp => (
-                                            <option key={emp.id} value={emp.id}>{emp.full_name} ({emp.role})</option>
-                                          ))}
-                                        </select>
-                                      </div>
-
-                                      {/* Orders Summary */}
-                                      <div className="bg-white rounded-xl border border-surface-100 p-4 shadow-sm">
-                                        <span className="text-[9px] text-surface-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-3"><ShoppingCart className="w-3 h-3" /> Room Orders</span>
-                                        {(() => {
-                                          const roomOrders = guestOrders.filter(o => o.booking_id === booking.id);
-                                          if (roomOrders.length === 0) return <p className="text-xs text-surface-400 italic">No orders placed.</p>;
-                                          return (
-                                            <div className="space-y-1 max-h-[80px] overflow-y-auto">
-                                              {roomOrders.slice(0, 5).map(o => (
-                                                <div key={o.id} className="flex items-center justify-between text-[10px]">
-                                                  <span className="text-surface-700">{o.inventory_items?.name || 'Item'} x{o.quantity}</span>
-                                                  <span className={`px-1 py-0.5 text-[7px] font-bold uppercase rounded-full ${
-                                                    o.status === 'served' ? 'bg-emerald-50 text-emerald-700' :
-                                                    o.status === 'preparing' ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'
-                                                  }`}>{o.status}</span>
-                                                </div>
-                                              ))}
-                                              {roomOrders.length > 5 && <span className="text-[8px] text-surface-400">+{roomOrders.length - 5} more</span>}
-                                            </div>
-                                          );
-                                        })()}
-                                      </div>
-                                    </div>
-
-                                    {/* Save/Cancel Buttons (only when editing) */}
-                                    {isEditing && (
-                                      <div className="flex justify-end gap-2 pt-2 border-t border-surface-100">
-                                        <button onClick={() => { setEditingBookingId(null); setSelectedBookingDetail(null); }}
-                                          className="px-4 py-2 border border-surface-200 text-surface-600 hover:bg-surface-100 rounded-lg text-xs font-medium cursor-pointer">Cancel</button>
-                                        <button onClick={() => handleBookingUpdateSave(booking)}
-                                          className="px-4 py-2 bg-surface-900 text-white hover:bg-surface-800 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5"><Check className="w-3.5 h-3.5" /> Save Changes</button>
-                                      </div>
-                                    )}
-
-                                    {/* Created At */}
-                                    <div className="text-[9px] text-surface-400 text-right">
-                                      Booked {new Date(booking.created_at).toLocaleString()}
-                                      <span className="mx-1.5">·</span>
-                                      ID: {booking.id.slice(0, 8)}...
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
+                                {/* Expanded Detail Panel — removed, modal used instead */}
+                              </button>
                             );
                           })
                       )}
@@ -3711,9 +3691,10 @@ Confirm this change?`,
                       { id: 'directory', label: 'Staff Directory', icon: 'UserCheck' },
                       { id: 'time', label: 'Time Tracking', icon: 'Clock' },
                       { id: 'payroll', label: 'Payroll', icon: 'DollarSign' },
-                      { id: 'shifts', label: 'Schedules & Swap Board', icon: 'Calendar' }
+                      { id: 'shifts', label: 'Schedules & Swap Board', icon: 'Calendar' },
+                      { id: 'shift_templates', label: 'Shift Management', icon: 'Clock' },
                     ].map(sub => {
-                      const Icon = sub.id === 'directory' ? UserCheck : sub.id === 'time' ? Clock : sub.id === 'shifts' ? Calendar : DollarSign;
+                      const Icon = sub.id === 'directory' ? UserCheck : sub.id === 'time' ? Clock : sub.id === 'shifts' ? Calendar : sub.id === 'shift_templates' ? Settings : DollarSign;
                       const isActive = wfSubTab === sub.id;
                       return (
                         <button
@@ -3790,6 +3771,7 @@ Confirm this change?`,
                                   <th className="p-4">Email</th>
                                   <th className="p-4">Role</th>
                                   <th className="p-4">Hourly Rate</th>
+                                  <th className="p-4">Shift</th>
                                   <th className="p-4">Type</th>
                                   <th className="p-4">Joined</th>
                                   <th className="p-4 text-right">Actions</th>
@@ -3825,6 +3807,21 @@ Confirm this change?`,
                                       ) : (
                                         <span className='text-surface-300 italic'>Not set</span>
                                       )}
+                                    </td>
+                                    <td className="p-4">
+                                      {(() => {
+                                        const assignment = employeeShiftAssignments.find(a => a.user_id === emp.id);
+                                        const shift = assignment?.shift_templates;
+                                        if (!shift) return <span className="text-surface-300 italic">—</span>;
+                                        const startH = parseInt(shift.start_time.slice(0, 2));
+                                        const isNight = startH >= 22 || startH < 6;
+                                        return (
+                                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold ${isNight ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
+                                            <Clock className="w-2.5 h-2.5" />
+                                            {shift.name}
+                                          </span>
+                                        );
+                                      })()}
                                     </td>
                                     <td className="p-4">
                                       {payroll ? (
@@ -4486,6 +4483,23 @@ Confirm this change?`,
                       showSuccess={(msg) => addToast('success', 'Schedule', msg)}
                       showError={(title, msg) => triggerAlert(title, msg)}
                     />
+                  )}
+
+                  {/* === SHIFT MANAGEMENT SUB-TAB === */}
+                  {wfSubTab === 'shift_templates' && (
+                    <div className="space-y-6">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h2 className="text-lg font-bold text-surface-900 tracking-tight">Shift Management</h2>
+                          <p className="text-xs text-surface-400 mt-0.5">Create and manage shift templates for employee scheduling.</p>
+                        </div>
+                      </div>
+                      <AdminShiftManagement
+                        addToast={addToast}
+                        triggerConfirm={triggerConfirm}
+                        triggerAlert={triggerAlert}
+                      />
+                    </div>
                   )}
 
 
@@ -5392,7 +5406,17 @@ Confirm this change?`,
                 />
               )}
 
-              {/* TABS 18: RESORT SETTINGS SETUP */}
+              {/* TABS 18: DATA BACKUP & RESTORE */}
+              {activeTab === 'backup' && (
+                <AdminBackupTab
+                  settings={settings}
+                  addToast={addToast}
+                  triggerConfirm={triggerConfirm}
+                  triggerAlert={triggerAlert}
+                />
+              )}
+
+              {/* TABS 19: RESORT SETTINGS SETUP */}
                             {activeTab === 'settings' && (
                 <AdminSettingsTab
                               settings={settings}
@@ -5689,6 +5713,21 @@ Confirm this change?`,
                       ? 'Full access to all settings, rooms, bookings, and workforce management.'
                       : 'Can manage assigned bookings and update room status based on their role. Cannot modify staff or settings.'}
                   </p>
+                </div>
+
+                <div>
+                  <label className="block text-surface-500 font-medium mb-1.5">Shift Assignment</label>
+                  <select
+                    value={employeeForm.shift_template_id}
+                    onChange={(e) => setEmployeeForm({ ...employeeForm, shift_template_id: e.target.value })}
+                    className="w-full bg-white border border-surface-200 rounded-lg py-2.5 px-3 text-xs text-surface-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-shadow font-sans tracking-tight"
+                  >
+                    <option value="">No shift assigned</option>
+                    {shiftTemplates.map(st => (
+                      <option key={st.id} value={st.id}>{st.name} ({st.start_time.slice(0,5)} — {st.end_time.slice(0,5)})</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-surface-400 mt-1">Assign a predefined shift schedule for attendance tracking and payroll.</p>
                 </div>
               </div>
 
@@ -6710,6 +6749,8 @@ Confirm this change?`,
         const customerBookings = bookings.filter(bk => bk.customer_id === b.customer_id).sort((a, bb) => new Date(bb.created_at).getTime() - new Date(a.created_at).getTime());
         const isOccupied = b.status === 'checked-in';
         const canToggle = b.status === 'confirmed' || b.status === 'checked-in';
+        const bookingOrders = guestOrders.filter(o => o.booking_id === b.id);
+        const bookingLogs = logs.filter(l => l.details?.includes(b.id) || l.action === 'booking_created' || l.action === 'booking_updated' || l.action === 'booking_cancelled' || l.action === 'booking_status_change' || l.action === 'check_in' || l.action === 'check_out');
         return (
         <div className="fixed inset-0 bg-surface-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-surface-100 shadow-2xl max-w-2xl w-full overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -6725,187 +6766,241 @@ Confirm this change?`,
               </button>
             </div>
 
+            {/* Tab Buttons */}
+            <div className="px-6 py-3 border-b border-surface-100 flex gap-1 overflow-x-auto bg-surface-50/50">
+              <button onClick={() => setBookingDetailTab('info')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer whitespace-nowrap transition-all flex items-center gap-1 ${
+                  bookingDetailTab === 'info' ? 'bg-surface-900 text-white shadow-sm' : 'bg-white text-surface-500 hover:text-surface-800 hover:bg-surface-100 border border-surface-200'
+                }`}>
+                <Info className="w-3 h-3" /> Basic Information
+              </button>
+              <button onClick={() => setBookingDetailTab('orders')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer whitespace-nowrap transition-all flex items-center gap-1 ${
+                  bookingDetailTab === 'orders' ? 'bg-surface-900 text-white shadow-sm' : 'bg-white text-surface-500 hover:text-surface-800 hover:bg-surface-100 border border-surface-200'
+                }`}>
+                <ShoppingCart className="w-3 h-3" /> Orders ({bookingOrders.length})
+              </button>
+              <button onClick={() => setBookingDetailTab('logs')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer whitespace-nowrap transition-all flex items-center gap-1 ${
+                  bookingDetailTab === 'logs' ? 'bg-surface-900 text-white shadow-sm' : 'bg-white text-surface-500 hover:text-surface-800 hover:bg-surface-100 border border-surface-200'
+                }`}>
+                <Activity className="w-3 h-3" /> Logs ({bookingLogs.length})
+              </button>
+            </div>
+
             <div className="p-6 space-y-5 text-xs font-sans tracking-tight max-h-[70vh] overflow-y-auto">
-              {/* Guest Info Card */}
-              <div className="bg-gradient-to-br from-brand-50 to-surface-50 rounded-xl p-4 border border-brand-100">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-brand-600 mb-3 flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5" /> Guest Information
-                </h4>
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-surface-500">Full Name</span>
-                    <span className="font-semibold text-surface-900">{customerInfo?.full_name || b.customers?.full_name || 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-surface-500">Email</span>
-                    <span className="font-medium text-surface-800">{customerInfo?.email || b.customers?.email || 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-surface-500">Phone</span>
-                    <span className="font-mono font-medium text-surface-800">{customerInfo?.phone || 'N/A'}</span>
-                  </div>
-                  {(customerInfo?.total_visits !== undefined || customerInfo?.notes) && (
-                    <>
-                      <div className="flex justify-between pt-2 border-t border-brand-200">
-                        <span className="text-surface-500 text-[9px]">Total Visits</span>
-                        <span className="font-bold text-surface-900">{customerInfo?.total_visits || 0}</span>
+              {/* TAB: Basic Information */}
+              {bookingDetailTab === 'info' && (
+                <>
+                  {/* Guest Info Card */}
+                  <div className="bg-gradient-to-br from-brand-50 to-surface-50 rounded-xl p-4 border border-brand-100">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-brand-600 mb-3 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" /> Guest Information
+                    </h4>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-surface-500">Full Name</span>
+                        <span className="font-semibold text-surface-900">{customerInfo?.full_name || b.customers?.full_name || 'N/A'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-surface-500 text-[9px]">Total Spent</span>
-                        <span className="font-bold text-surface-900">{settings.currencySymbol}{(customerInfo?.total_spent || 0).toLocaleString()}</span>
+                        <span className="text-surface-500">Email</span>
+                        <span className="font-medium text-surface-800">{customerInfo?.email || b.customers?.email || 'N/A'}</span>
                       </div>
-                      {customerInfo?.notes && (
-                        <div className="pt-2 border-t border-brand-200">
-                          <span className="text-surface-500 text-[9px] block mb-1">Notes</span>
-                          <p className="text-xs text-surface-700 bg-white/80 rounded-lg p-2">{customerInfo.notes}</p>
-                        </div>
-                      )}
-                      {customerInfo?.preferences && Object.keys(customerInfo.preferences).length > 0 && (
-                        <div className="pt-2 border-t border-brand-200">
-                          <span className="text-surface-500 text-[9px] block mb-1">Preferences</span>
-                          <div className="flex flex-wrap gap-1">
-                            {Object.entries(customerInfo.preferences).map(([k, v]) => (
-                              <span key={k} className="px-1.5 py-0.5 bg-white/80 rounded text-[9px] text-surface-600 border border-brand-100">
-                                {k.replace(/_/g, ' ')}: {String(v)}
-                              </span>
-                            ))}
+                      <div className="flex justify-between">
+                        <span className="text-surface-500">Phone</span>
+                        <span className="font-mono font-medium text-surface-800">{customerInfo?.phone || 'N/A'}</span>
+                      </div>
+                      {(customerInfo?.total_visits !== undefined || customerInfo?.notes) && (
+                        <>
+                          <div className="flex justify-between pt-2 border-t border-brand-200">
+                            <span className="text-surface-500 text-[9px]">Total Visits</span>
+                            <span className="font-bold text-surface-900">{customerInfo?.total_visits || 0}</span>
                           </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Current Booking Details */}
-              <div className="bg-white rounded-xl border border-surface-200 p-4">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5" /> Current Reservation
-                </h4>
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-surface-500">Room</span>
-                    <span className="font-bold text-surface-900">Suite {b.rooms?.room_number} &mdash; {b.rooms?.type}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-surface-500">Check-In Date</span>
-                    <span className="font-semibold text-surface-900">{b.check_in_date}</span>
-                  </div>
-                  <div className="flex items-center justify-between bg-brand-50 rounded-lg px-3 py-2 -mx-1">
-                    <span className="font-semibold text-brand-700 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5" /> Arrival Time
-                    </span>
-                    <span className="font-bold text-brand-800 bg-white px-2.5 py-1 rounded-md text-[11px] shadow-sm">{b.check_in_time}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-surface-500">Check-Out</span>
-                    <span className="font-semibold text-surface-900">{b.check_out_date} at {b.check_out_time}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-surface-500">Total Paid</span>
-                    <span className="font-mono font-bold text-surface-900">{settings.currencySymbol}{b.total_price}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-surface-500">Status</span>
-                    <span className={`px-2 py-0.5 font-bold uppercase text-[9px] rounded-full ${
-                      b.status === 'confirmed' || b.status === 'checked-in'
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : b.status === 'cancelled'
-                        ? 'bg-rose-50 text-rose-700'
-                        : 'bg-amber-50 text-amber-700'
-                    }`}>{b.status}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* All Orders by This Guest */}
-              <div className="bg-white rounded-xl border border-surface-200 p-4">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
-                  <BookOpen className="w-3.5 h-3.5" /> All Orders by {customerInfo?.full_name || b.customers?.full_name || 'Guest'} ({customerBookings.length})
-                </h4>
-                {customerBookings.length === 0 ? (
-                  <p className="text-surface-400 text-xs italic py-2">No other reservations found.</p>
-                ) : (
-                  <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
-                    {customerBookings.map(cb => (
-                      <div key={cb.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
-                        <div className="flex items-center gap-3">
-                          <span className="font-semibold text-surface-800 min-w-[80px]">Suite {cb.rooms?.room_number || '?'}</span>
-                          <span className="text-surface-400 text-[10px]">{cb.check_in_date}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-surface-700 font-medium">{settings.currencySymbol}{cb.total_price}</span>
-                          <span className={`px-1.5 py-0.5 font-bold uppercase text-[8px] rounded-full ${
-                            cb.status === 'confirmed' || cb.status === 'checked-in'
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : cb.status === 'cancelled'
-                              ? 'bg-rose-50 text-rose-700'
-                              : 'bg-amber-50 text-amber-700'
-                          }`}>{cb.status}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Guest Orders */}
-              <div className="bg-white rounded-xl border border-surface-200 p-4">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
-                  <ShoppingCart className="w-3.5 h-3.5" /> Guest Orders
-                </h4>
-                {(() => {
-                  const bookingOrders = guestOrders.filter(o => o.booking_id === b.id);
-                  return (
-                    <>
-                      {bookingOrders.length === 0 ? (
-                        <p className="text-surface-400 text-xs italic py-2">No orders placed for this booking yet.</p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[150px] overflow-y-auto mb-3">
-                          {bookingOrders.map(o => (
-                            <div key={o.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-surface-800 text-[11px]">{o.inventory_items?.name}</span>
-                                <span className="text-surface-400 text-[10px]">x{o.quantity}</span>
-                                <span className="font-mono text-surface-600 text-[10px]">{settings.currencySymbol}{Number(o.total_price).toFixed(2)}</span>
-                              </div>
-                              <span className={`px-1.5 py-0.5 font-bold uppercase text-[8px] rounded-full ${
-                                o.status === 'served' ? 'bg-emerald-50 text-emerald-700' : o.status === 'preparing' ? 'bg-amber-50 text-amber-700' : o.status === 'cancelled' ? 'bg-rose-50 text-rose-700' : 'bg-sky-50 text-sky-700'
-                              }`}>{o.status}</span>
+                          <div className="flex justify-between">
+                            <span className="text-surface-500 text-[9px]">Total Spent</span>
+                            <span className="font-bold text-surface-900">{settings.currencySymbol}{(customerInfo?.total_spent || 0).toLocaleString()}</span>
+                          </div>
+                          {customerInfo?.notes && (
+                            <div className="pt-2 border-t border-brand-200">
+                              <span className="text-surface-500 text-[9px] block mb-1">Notes</span>
+                              <p className="text-xs text-surface-700 bg-white/80 rounded-lg p-2">{customerInfo.notes}</p>
                             </div>
-                          ))}
-                        </div>
+                          )}
+                          {customerInfo?.preferences && Object.keys(customerInfo.preferences).length > 0 && (
+                            <div className="pt-2 border-t border-brand-200">
+                              <span className="text-surface-500 text-[9px] block mb-1">Preferences</span>
+                              <div className="flex flex-wrap gap-1">
+                                {Object.entries(customerInfo.preferences).map(([k, v]) => (
+                                  <span key={k} className="px-1.5 py-0.5 bg-white/80 rounded text-[9px] text-surface-600 border border-brand-100">
+                                    {k.replace(/_/g, ' ')}: {String(v)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
-                      <button onClick={() => handleOpenOrderCreate(b)} className="w-full py-2 bg-emerald-50 text-emerald-700 border-2 border-emerald-200 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-100 transition-all cursor-pointer flex items-center justify-center gap-1">
-                        <Plus className="w-3.5 h-3.5" /> Place Order
-                      </button>
-                    </>
-                  );
-                })()}
-              </div>
+                    </div>
+                  </div>
 
-              {/* Occupancy Toggle Action */}
-              {canToggle && (
-                <div className="bg-white rounded-xl border border-surface-200 p-4">
-                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
-                    <UserCheck className="w-3.5 h-3.5" /> Room Occupancy Status
-                  </h4>
-                  <p className="text-surface-500 text-[11px] mb-3">
-                    {isOccupied
-                      ? "This guest is currently marked as occupying the room. Click below to revert."
-                      : "Mark this guest as checked in and currently occupying the room."}
-                  </p>
-                  <button
-                    onClick={() => handleQuickCheckIn(b)}
-                    className={`w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                      isOccupied
-                        ? 'bg-amber-50 text-amber-700 border-2 border-amber-300 hover:bg-amber-100'
-                        : 'bg-emerald-50 text-emerald-700 border-2 border-emerald-300 hover:bg-emerald-100'
-                    }`}
-                  >
-                    <UserCheck className="w-4 h-4" />
-                    {isOccupied ? 'Revert Check-In (Mark as Not Occupied)' : 'Mark as Checked-In / Occupied'}
-                  </button>
+                  {/* Current Booking Details */}
+                  <div className="bg-white rounded-xl border border-surface-200 p-4">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5" /> Current Reservation
+                    </h4>
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-surface-500">Room</span>
+                        <span className="font-bold text-surface-900">Suite {b.rooms?.room_number} &mdash; {b.rooms?.type}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-surface-500">Check-In Date</span>
+                        <span className="font-semibold text-surface-900">{b.check_in_date}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-brand-50 rounded-lg px-3 py-2 -mx-1">
+                        <span className="font-semibold text-brand-700 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" /> Arrival Time
+                        </span>
+                        <span className="font-bold text-brand-800 bg-white px-2.5 py-1 rounded-md text-[11px] shadow-sm">{b.check_in_time}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-surface-500">Check-Out</span>
+                        <span className="font-semibold text-surface-900">{b.check_out_date} at {b.check_out_time}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-surface-500">Total Paid</span>
+                        <span className="font-mono font-bold text-surface-900">{settings.currencySymbol}{b.total_price}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-surface-500">Status</span>
+                        <span className={`px-2 py-0.5 font-bold uppercase text-[9px] rounded-full ${
+                          b.status === 'confirmed' || b.status === 'checked-in'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : b.status === 'cancelled'
+                            ? 'bg-rose-50 text-rose-700'
+                            : 'bg-amber-50 text-amber-700'
+                        }`}>{b.status}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* All Orders by This Guest */}
+                  <div className="bg-white rounded-xl border border-surface-200 p-4">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5" /> All Orders by {customerInfo?.full_name || b.customers?.full_name || 'Guest'} ({customerBookings.length})
+                    </h4>
+                    {customerBookings.length === 0 ? (
+                      <p className="text-surface-400 text-xs italic py-2">No other reservations found.</p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
+                        {customerBookings.map(cb => (
+                          <div key={cb.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-surface-800 min-w-[80px]">Suite {cb.rooms?.room_number || '?'}</span>
+                              <span className="text-surface-400 text-[10px]">{cb.check_in_date}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-surface-700 font-medium">{settings.currencySymbol}{cb.total_price}</span>
+                              <span className={`px-1.5 py-0.5 font-bold uppercase text-[8px] rounded-full ${
+                                cb.status === 'confirmed' || cb.status === 'checked-in'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : cb.status === 'cancelled'
+                                  ? 'bg-rose-50 text-rose-700'
+                                  : 'bg-amber-50 text-amber-700'
+                              }`}>{cb.status}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Occupancy Toggle Action */}
+                  {canToggle && (
+                    <div className="bg-white rounded-xl border border-surface-200 p-4">
+                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
+                        <UserCheck className="w-3.5 h-3.5" /> Room Occupancy Status
+                      </h4>
+                      <p className="text-surface-500 text-[11px] mb-3">
+                        {isOccupied
+                          ? "This guest is currently marked as occupying the room. Click below to revert."
+                          : "Mark this guest as checked in and currently occupying the room."}
+                      </p>
+                      <button
+                        onClick={() => handleQuickCheckIn(b)}
+                        className={`w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          isOccupied
+                            ? 'bg-amber-50 text-amber-700 border-2 border-amber-300 hover:bg-amber-100'
+                            : 'bg-emerald-50 text-emerald-700 border-2 border-emerald-300 hover:bg-emerald-100'
+                        }`}
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        {isOccupied ? 'Revert Check-In (Mark as Not Occupied)' : 'Mark as Checked-In / Occupied'}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* TAB: Orders */}
+              {bookingDetailTab === 'orders' && (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-xl border border-surface-200 p-4">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
+                      <ShoppingCart className="w-3.5 h-3.5" /> Guest Orders
+                    </h4>
+                    {bookingOrders.length === 0 ? (
+                      <p className="text-surface-400 text-xs italic py-2">No orders placed for this booking yet.</p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[300px] overflow-y-auto mb-3">
+                        {bookingOrders.map(o => (
+                          <div key={o.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-surface-800 text-[11px]">{o.inventory_items?.name}</span>
+                              <span className="text-surface-400 text-[10px]">x{o.quantity}</span>
+                              <span className="font-mono text-surface-600 text-[10px]">{settings.currencySymbol}{Number(o.total_price).toFixed(2)}</span>
+                            </div>
+                            <span className={`px-1.5 py-0.5 font-bold uppercase text-[8px] rounded-full ${
+                              o.status === 'served' ? 'bg-emerald-50 text-emerald-700' : o.status === 'preparing' ? 'bg-amber-50 text-amber-700' : o.status === 'cancelled' ? 'bg-rose-50 text-rose-700' : 'bg-sky-50 text-sky-700'
+                            }`}>{o.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button onClick={() => handleOpenOrderCreate(b)} className="w-full py-2 bg-emerald-50 text-emerald-700 border-2 border-emerald-200 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-100 transition-all cursor-pointer flex items-center justify-center gap-1">
+                      <Plus className="w-3.5 h-3.5" /> Place Order
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: Logs */}
+              {bookingDetailTab === 'logs' && (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-xl border border-surface-200 p-4">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-surface-500 mb-3 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5" /> Activity Logs ({bookingLogs.length})
+                    </h4>
+                    {bookingLogs.length === 0 ? (
+                      <p className="text-surface-400 text-xs italic py-2">No activity logs for this booking.</p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
+                        {bookingLogs.map(l => (
+                          <div key={l.id} className="flex items-start gap-3 bg-surface-50 rounded-lg px-3 py-2 border border-surface-100">
+                            <div className="w-1.5 h-1.5 rounded-full bg-brand-400 mt-1.5 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-surface-800 text-[11px] capitalize">{l.action.replace(/_/g, ' ')}</span>
+                                <span className="text-[9px] text-surface-400 whitespace-nowrap">{new Date(l.created_at).toLocaleString()}</span>
+                              </div>
+                              <p className="text-[10px] text-surface-500 mt-0.5 truncate">{l.details}</p>
+                              <span className="text-[9px] text-surface-400 mt-0.5 block">by {l.user_name}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -7330,6 +7425,73 @@ Confirm this change?`,
           </div>
         </div>
       )}
+
+      {/* Reservation History Modal */}
+      {roomHistoryModal && (() => {
+        const { room, page } = roomHistoryModal;
+        const roomBookings = bookings.filter(b => b.room_id === room.id)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        const totalPages = Math.ceil(roomBookings.length / ROOM_HISTORY_PAGE_SIZE);
+        const pageBookings = roomBookings.slice(page * ROOM_HISTORY_PAGE_SIZE, (page + 1) * ROOM_HISTORY_PAGE_SIZE);
+        return (
+        <div className="fixed inset-0 bg-surface-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setRoomHistoryModal(null)}>
+          <div className="bg-white rounded-2xl border border-surface-100 shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-6 pt-6 pb-4 border-b border-surface-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-surface-900">Suite {room.room_number}</h3>
+                <p className="text-[11px] text-surface-400 mt-0.5">{roomBookings.length} reservation{roomBookings.length !== 1 ? 's' : ''} · {room.type}</p>
+              </div>
+              <button onClick={() => setRoomHistoryModal(null)} className="p-1.5 text-surface-400 hover:text-surface-600 hover:bg-surface-100 rounded-lg cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              {roomBookings.length === 0 ? (
+                <p className="text-xs text-surface-400 text-center py-8">No reservations for this room yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 text-[9px] font-bold uppercase tracking-wider text-surface-400 px-3 mb-1">
+                    <span>Guest</span>
+                    <span>Check-in</span>
+                    <span>Total</span>
+                    <span>Status</span>
+                  </div>
+                  <hr className="border-surface-100" />
+                  {pageBookings.map(b => (
+                    <button key={b.id} onClick={() => { setRoomHistoryModal(null); setSelectedBookingDetail(b); setBookingDetailTab('info'); }}
+                      className="w-full grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center bg-white hover:bg-surface-50 rounded-xl px-3 py-3 border border-surface-100 hover:border-brand-200 text-xs transition-all text-left cursor-pointer">
+                      <span className="font-semibold text-surface-900 truncate">{b.customers?.full_name || 'Unknown'}</span>
+                      <span className="text-surface-500 text-[10px] whitespace-nowrap">{b.check_in_date}</span>
+                      <span className="font-mono font-semibold text-surface-900 whitespace-nowrap">{settings.currencySymbol}{b.total_price}</span>
+                      <span className={`px-2 py-0.5 font-bold uppercase text-[8px] rounded-full text-center ${
+                        b.status === 'confirmed' || b.status === 'checked-in'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : b.status === 'cancelled'
+                          ? 'bg-rose-50 text-rose-700'
+                          : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {b.status === 'checked-in' ? 'IN' : b.status === 'completed' ? 'OUT' : b.status === 'confirmed' ? 'OK' : b.status === 'pending' ? '...' : '✕'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {totalPages > 1 && (
+              <div className="px-6 py-4 border-t border-surface-100 flex items-center justify-between">
+                <button disabled={page === 0} onClick={() => setRoomHistoryModal({ room, page: page - 1 })}
+                  className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer">
+                  Previous
+                </button>
+                <span className="text-[10px] text-surface-400 font-semibold">Page {page + 1} of {totalPages}</span>
+                <button disabled={page >= totalPages - 1} onClick={() => setRoomHistoryModal({ room, page: page + 1 })}
+                  className="px-3 py-1.5 text-[10px] font-bold rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer">
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Rate Plan Modal */}
       {showRatePlanModal && (

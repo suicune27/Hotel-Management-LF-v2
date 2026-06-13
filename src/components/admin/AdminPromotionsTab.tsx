@@ -741,7 +741,7 @@ export default function AdminPromotionsTab({
 
       {/* ── PROMO CODE MODAL ── */}
       {showPromoModal && (
-        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowPromoModal(false); setSelectedPromo(null); }}>
+        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl border border-surface-100 max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-surface-900">{selectedPromo ? 'Edit Promo Code' : 'Add Promo Code'}</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -817,7 +817,7 @@ export default function AdminPromotionsTab({
 
       {/* ── RATE PLAN MODAL ── */}
       {showRatePlanModal && (
-        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowRatePlanModal(false); setSelectedRatePlan(null); }}>
+        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl border border-surface-100 max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-surface-900">{selectedRatePlan ? 'Edit Rate Plan' : 'Add Rate Plan'}</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -883,7 +883,7 @@ export default function AdminPromotionsTab({
 
       {/* ── WAITLIST MODAL ── */}
       {showWaitlistModal && (
-        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowWaitlistModal(false); setSelectedWaitlist(null); }}>
+        <div className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl border border-surface-100 max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-surface-900">{selectedWaitlist ? 'Edit Waitlist Entry' : 'Add Waitlist Entry'}</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">

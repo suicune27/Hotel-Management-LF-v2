@@ -1518,6 +1518,51 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
     );
   };
 
+  const handleShiftChange = async (userId: string, shiftTemplateId: string) => {
+    try {
+      const existingAssignment = employeeShiftAssignments.find(a => a.user_id === userId);
+      const today = new Date().toISOString().split('T')[0];
+
+      if (shiftTemplateId) {
+        if (existingAssignment) {
+          if (existingAssignment.shift_template_id !== shiftTemplateId) {
+            await supabase.from('employee_shift_assignments').update({ is_active: false, effective_to: today }).eq('id', existingAssignment.id);
+            const { data: newAssign } = await supabase.from('employee_shift_assignments').insert({
+              user_id: userId,
+              shift_template_id: shiftTemplateId,
+              effective_from: today,
+              is_active: true,
+            }).select('*, shift_templates(*)').single();
+            if (newAssign) {
+              setEmployeeShiftAssignments(prev => prev.filter(a => a.user_id !== userId).concat(newAssign as any));
+            }
+          }
+        } else {
+          const { data: newAssign } = await supabase.from('employee_shift_assignments').insert({
+            user_id: userId,
+            shift_template_id: shiftTemplateId,
+            effective_from: today,
+            is_active: true,
+          }).select('*, shift_templates(*)').single();
+          if (newAssign) {
+            setEmployeeShiftAssignments(prev => prev.filter(a => a.user_id !== userId).concat(newAssign as any));
+          }
+        }
+      } else if (existingAssignment) {
+        await supabase.from('employee_shift_assignments').update({ is_active: false, effective_to: today }).eq('id', existingAssignment.id);
+        setEmployeeShiftAssignments(prev => prev.filter(a => a.id !== existingAssignment.id));
+      }
+
+      const shiftName = shiftTemplateId 
+        ? shiftTemplates.find(st => st.id === shiftTemplateId)?.name || 'a shift' 
+        : 'No shift';
+      const empName = employees.find(e => e.id === userId)?.full_name || userId;
+      addToast('success', 'Shift Updated', empName + ' assigned to ' + shiftName + '.');
+    } catch (err: any) {
+      triggerAlert('Shift Update Error', err.message);
+    }
+  };
+
   // ===== INVENTORY CRUD HANDLERS =====
   const handleAddMenuCategory = async () => {
     const name = newMenuCatName.trim();
@@ -3808,22 +3853,19 @@ Confirm this change?`,
                                         <span className='text-surface-300 italic'>Not set</span>
                                       )}
                                     </td>
-                                    <td className="p-4">
-                                      {(() => {
-                                        const assignment = employeeShiftAssignments.find(a => a.user_id === emp.id);
-                                        const shift = assignment?.shift_templates;
-                                        if (!shift) return <span className="text-surface-300 italic">—</span>;
-                                        const startH = parseInt(shift.start_time.slice(0, 2));
-                                        const isNight = startH >= 22 || startH < 6;
-                                        return (
-                                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold ${isNight ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
-                                            <Clock className="w-2.5 h-2.5" />
-                                            {shift.name}
-                                          </span>
-                                        );
-                                      })()}
-                                    </td>
-                                    <td className="p-4">
+                                                                            <td className="p-4">
+                                          <select
+                                            value={employeeShiftAssignments.find(a => a.user_id === emp.id)?.shift_template_id || ''}
+                                            onChange={(e) => handleShiftChange(emp.id, e.target.value)}
+                                            className="w-full bg-white border border-surface-200 rounded-lg py-1.5 px-2 text-[10px] text-surface-700 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-shadow font-sans tracking-tight cursor-pointer"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <option value="">—</option>
+                                            {shiftTemplates.map(st => (
+                                              <option key={st.id} value={st.id}>{st.name}</option>
+                                            ))}
+                                          </select>
+                                        </td>                                    <td className="p-4">
                                       {payroll ? (
                                         <span className='text-[10px] font-semibold text-surface-500 uppercase'>{payroll.employment_type}</span>
                                       ) : (

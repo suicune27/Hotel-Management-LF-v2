@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -14,13 +14,16 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'Link Fortress IT Solutions',
+    frame: false,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 18, y: 18 },
     icon: path.join(__dirname, '../public/favicon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0f172a',
     show: false,
   });
 
@@ -46,6 +49,28 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+});
+
+ipcMain.handle('window:maximize', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+  return mainWindow.isMaximized();
+});
+
+ipcMain.handle('window:get-state', () => ({
+  isMaximized: mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false,
+}));
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+});
 
 function startViteDevServer() {
   return new Promise((resolve, reject) => {

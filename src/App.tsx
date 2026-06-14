@@ -1,5 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import { Maximize2, Minimize2, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { fetchSettingsFromSupabase } from './lib/settings';
 import { Profile } from './types';
@@ -29,11 +30,39 @@ function AppContent() {
   );
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [isElectron, setIsElectron] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   // Sync settings with database on bootstrap
   useEffect(() => {
     fetchSettingsFromSupabase();
   }, []);
+
+  useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (api?.isElectron) {
+      setIsElectron(true);
+      api.getWindowState().then((state: { isMaximized?: boolean }) => setIsMaximized(Boolean(state?.isMaximized)));
+    }
+  }, []);
+
+  const handleWindowAction = async (action: 'minimize' | 'maximize' | 'close') => {
+    const api = (window as any).electronAPI;
+    if (!api?.isElectron) return;
+
+    if (action === 'minimize') {
+      await api.minimizeWindow();
+      return;
+    }
+
+    if (action === 'maximize') {
+      const next = await api.toggleMaximizeWindow();
+      setIsMaximized(Boolean(next));
+      return;
+    }
+
+    await api.closeWindow();
+  };
 
   // Helper to fetch profile linked from auth.users to public.users (or use user_metadata fallback)
   const fetchProfile = async (user: Session['user']): Promise<Profile> => {
@@ -294,34 +323,70 @@ function AppContent() {
     setProfile(updatedProfile);
   };
 
+  const desktopTitleBar = isElectron ? (
+    <div className="desktop-titlebar" data-electron-titlebar>
+      <div className="desktop-titlebar__brand">
+        <span className="desktop-titlebar__dot" />
+        <span>Link Fortress IT Solutions</span>
+      </div>
+      <div className="desktop-titlebar__controls">
+        <button type="button" className="desktop-titlebar__button desktop-titlebar__button--ghost" onClick={() => handleWindowAction('minimize')} aria-label="Minimize window">
+          <Minimize2 className="desktop-titlebar__icon" size={13} />
+        </button>
+        <button type="button" className="desktop-titlebar__button desktop-titlebar__button--ghost" onClick={() => handleWindowAction('maximize')} aria-label={isMaximized ? 'Restore window' : 'Maximize window'}>
+          <Maximize2 className="desktop-titlebar__icon" size={13} />
+        </button>
+        <button type="button" className="desktop-titlebar__button desktop-titlebar__button--close" onClick={() => handleWindowAction('close')} aria-label="Close window">
+          <X className="desktop-titlebar__icon" size={13} />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   // If Supabase is not configured yet, show our gorgeous configuration onboarding guide
   if (!isSupabaseConfigured) {
-    return <ConfigurationGuide />;
+    return (
+      <>
+        {desktopTitleBar}
+        <ConfigurationGuide />
+      </>
+    );
   }
 
   // Handle Tab Navigation Transitions
 
   switch (screen) {
     case 'login':
-      return <AuthLayout onNavigate={handleNavigate} onAuthSuccess={handleAuthSuccess} />;
+      return (
+        <>
+          {desktopTitleBar}
+          <AuthLayout onNavigate={handleNavigate} onAuthSuccess={handleAuthSuccess} />
+        </>
+      );
     case 'admin-dashboard':
       return (
-        <AdminDashboard 
-          onNavigate={handleNavigate} 
-          userSession={session} 
-          userProfile={profile} 
-          onLogout={handleLogout} 
-        />
+        <>
+          {desktopTitleBar}
+          <AdminDashboard 
+            onNavigate={handleNavigate} 
+            userSession={session} 
+            userProfile={profile} 
+            onLogout={handleLogout} 
+          />
+        </>
       );
     case 'employee-dashboard':
       return (
-        <EmployeeDashboard 
-          onNavigate={handleNavigate} 
-          userSession={session} 
-          userProfile={profile} 
-          onLogout={handleLogout}
-          onProfileUpdate={handleProfileUpdate}
-        />
+        <>
+          {desktopTitleBar}
+          <EmployeeDashboard 
+            onNavigate={handleNavigate} 
+            userSession={session} 
+            userProfile={profile} 
+            onLogout={handleLogout}
+            onProfileUpdate={handleProfileUpdate}
+          />
+        </>
       );
     case 'guest-access':
       const gParams = new URLSearchParams(window.location.search);
@@ -329,39 +394,56 @@ function AppContent() {
       const gPath = window.location.pathname;
       const gUid = gPath.startsWith('/guest-access/') ? gPath.replace('/guest-access/', '').split('/')[0] : null;
       return (
-        <GuestDashboard 
-          onNavigate={handleNavigate as any} 
-          userSession={null} 
-          userProfile={null} 
-          onLogout={handleLogout}
-          onProfileUpdate={handleProfileUpdate}
-          roomNumber={gRoomNum}
-          bookingUid={gUid}
-        />
+        <>
+          {desktopTitleBar}
+          <GuestDashboard 
+            onNavigate={handleNavigate as any} 
+            userSession={null} 
+            userProfile={null} 
+            onLogout={handleLogout}
+            onProfileUpdate={handleProfileUpdate}
+            roomNumber={gRoomNum}
+            bookingUid={gUid}
+          />
+        </>
       );
     case 'guest-dashboard':
       return (
-        <GuestDashboard 
-          onNavigate={handleNavigate as any} 
-          userSession={session} 
-          userProfile={profile} 
-          onLogout={handleLogout}
-          onProfileUpdate={handleProfileUpdate}
-        />
+        <>
+          {desktopTitleBar}
+          <GuestDashboard 
+            onNavigate={handleNavigate as any} 
+            userSession={session} 
+            userProfile={profile} 
+            onLogout={handleLogout}
+            onProfileUpdate={handleProfileUpdate}
+          />
+        </>
       );
     case 'front-desk':
       return (
-        <FrontDeskPanel 
-          onNavigate={handleNavigate as any}
-          userProfile={profile}
-          onLogout={handleLogout}
-        />
+        <>
+          {desktopTitleBar}
+          <FrontDeskPanel 
+            onNavigate={handleNavigate as any}
+            userProfile={profile}
+            onLogout={handleLogout}
+          />
+        </>
       );
     case 'kiosk':
-      return <KioskMode onNavigate={handleNavigate as any} />;
+      return (
+        <>
+          {desktopTitleBar}
+          <KioskMode onNavigate={handleNavigate as any} />
+        </>
+      );
     default:
       return (
-        <AuthLayout onNavigate={handleNavigate} onAuthSuccess={handleAuthSuccess} />
+        <>
+          {desktopTitleBar}
+          <AuthLayout onNavigate={handleNavigate} onAuthSuccess={handleAuthSuccess} />
+        </>
       );
   }
 }

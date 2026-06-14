@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { Room, Profile, GuestOrder, ChatMessage, ChatTyping, StaffCall, Booking, RatePlan, PromoCode } from '../types';
 import {
@@ -1973,8 +1973,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
             )}
 
             {/* ===== ROOMS TAB ===== */}
-            {activeTab === 'rooms' && (
-              <div className="mt-4 flex gap-5">
+            <AnimatePresence>{activeTab === 'rooms' && (
+              <motion.div key="rooms" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }} className="mt-4 flex gap-5">
                 <div className={`flex-1 min-w-0 ${selectedRoom ? 'lg:w-3/5 xl:w-2/3' : ''}`}>
                   <div className="mb-3 rounded-2xl border border-surface-200 bg-white/90 backdrop-blur-sm px-4 py-2.5 flex items-center justify-between gap-3 shadow-sm">
                     <div className="flex items-center gap-2">
@@ -2057,10 +2057,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                   </div>
                 </div>
 
-              </div>
-            )}
+              </motion.div>
+            )}</AnimatePresence>
 
-            <AnimatePresence mode="wait">
+            <AnimatePresence>
               {selectedRoom && (
                 <RoomModal
                   key={selectedRoom.id + '-' + roomModalRefreshKey}
@@ -2096,7 +2096,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
             </AnimatePresence>
 
             {/* ===== ORDERS TAB ===== */}
-            {activeTab === 'orders' && <OrdersContent
+            <AnimatePresence>{activeTab === 'orders' && <motion.div key="orders" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><OrdersContent
               guestOrders={guestOrders}
               loading={loading}
               orderView={orderView}
@@ -2105,10 +2105,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
               updateOrderStatus={updateOrderStatus}
               setOrderDetailModal={setOrderDetailModal}
               currencySymbol={settings.currencySymbol}
-            />}
+            /></motion.div>}</AnimatePresence>
 
             {/* ===== CHAT TAB ===== */}
-            {activeTab === 'chat' && <ChatContent
+            <AnimatePresence>{activeTab === 'chat' && <motion.div key="chat" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><ChatContent
               chatMessages={chatMessages}
               chatConversations={chatConversations}
               selectedChatBooking={selectedChatBooking}
@@ -2121,17 +2121,17 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
               chatEndRef={chatEndRef}
               typingUsers={typingUsers}
               onChatInputChange={handleChatInputChange}
-            />}
+            /></motion.div>}</AnimatePresence>
 
             {/* ===== REQUESTS TAB ===== */}
-            {activeTab === 'requests' && <RequestsContent
+            <AnimatePresence>{activeTab === 'requests' && <motion.div key="requests" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><RequestsContent
               staffCalls={staffCalls}
               stayExtensions={stayExtensions}
               loading={loading}
               updateCallStatus={updateCallStatus}
               onApproveExtension={handleApproveExtension}
               onRejectExtension={handleRejectExtension}
-            />}
+            /></motion.div>}</AnimatePresence>
 
             {/* ===== HOUSEKEEPING BOARD TAB ===== */}
             {activeTab === 'housekeeping' && (() => {

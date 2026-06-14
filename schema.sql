@@ -680,6 +680,7 @@ ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS recurring_rule TEXT;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES public.booking_groups(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS promo_code_id UUID REFERENCES public.promo_codes(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS discount_description TEXT;
 
 -- 11. ENABLE RLS ON NEW TABLES
 ALTER TABLE public.booking_groups ENABLE ROW LEVEL SECURITY;

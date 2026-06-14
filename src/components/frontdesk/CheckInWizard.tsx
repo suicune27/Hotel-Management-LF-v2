@@ -232,7 +232,7 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
         check_in_time: actualCiTime,
         check_out_time: coTime,
         total_price: actualTotal,
-        discount_amount: actualDiscountAmount > 0 ? actualDiscountAmount : null,
+        discount_amount: actualDiscountAmount > 0 ? actualDiscountAmount : 0,
         discount_description: discountDesc || null,
         rate_plan_id: selectedRatePlanId || null,
         promo_code_id: appliedPromo?.id || null,
@@ -451,6 +451,35 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
                     className="input-field" />
                   <TimePicker value={checkOutTime} onChange={setCheckOutTime} options={room.check_out_times || []} placeholder="e.g. 12:00 PM" />
                 </div>
+              </div>
+
+              {/* Quick Duration Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-surface-400 mr-1">Quick Stay:</span>
+                {[3, 5, 12, 24].map(h => {
+                  const label = h >= 24 ? `${h / 24} Day` : `${h}h`;
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => {
+                        const ciD = new Date(`${toIso(checkInDate || todayStr())}T${to24h(checkInTime || '00:00')}`);
+                        const coD = new Date(ciD.getTime() + h * 3600000);
+                        const mo = String(coD.getMonth() + 1).padStart(2, '0');
+                        const dd = String(coD.getDate()).padStart(2, '0');
+                        const yy = coD.getFullYear();
+                        setCheckOutDate(`${mo}/${dd}/${yy}`);
+                        const mins = coD.getHours() * 60 + coD.getMinutes();
+                        const sorted = [...(room.check_out_times || []).map(timeToMin)].sort((a, b) => a - b);
+                        const snap = sorted.find(t => t >= mins) ?? mins;
+                        setCheckOutTime(minToTime12(snap));
+                      }}
+                      className="px-2.5 py-1 bg-white border border-surface-200 hover:border-brand-300 hover:bg-brand-50 rounded-lg text-[10px] font-semibold text-surface-600 hover:text-brand-700 cursor-pointer transition-all"
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="bg-surface-0 rounded-xl p-3 space-y-2">

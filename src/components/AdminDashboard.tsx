@@ -7887,28 +7887,30 @@ Confirm this change?`,
                       customerId = existing.id;
                     } else {
                       const { data: newCust, error: custErr } = await supabase.from('customers').insert({
-                        full_name: quickBookForm.guest_name, email: quickBookForm.guest_email || `${quickBookForm.guest_name.replace(/\s/g,'')}@temp.com`, phone: quickBookForm.guest_phone
+                        full_name: quickBookForm.guest_name, email: quickBookForm.guest_email || `${quickBookForm.guest_name.replace(/\s/g,'')}@temp.com`, phone: quickBookForm.guest_phone || ''
                       }).select().single();
                       if (custErr) throw custErr;
                       customerId = newCust.id;
                     }
                     const ci = new Date(quickBookForm.check_in + 'T' + (quickBookForm.check_in_time || '00:00'));
                     const co = new Date(quickBookForm.check_out + 'T' + (quickBookForm.check_out_time || '00:00'));
-                    const hours = Math.max(1, Math.round((co.getTime() - ci.getTime()) / 3600000));
-                    const baseTotal = hours * Number(quickBookRoom.price_per_hour);
+                    const diffMs = co.getTime() - ci.getTime();
+                    const hours = Number.isFinite(diffMs) ? Math.max(1, Math.round(diffMs / 3600000)) : 1;
+                    const rate = Number(quickBookRoom.price_per_hour) || 0;
+                    const baseTotal = hours * rate;
                     const discount = quickBookSelectedPromo
                       ? quickBookSelectedPromo.discount_type === 'percentage'
                         ? Math.round(baseTotal * Number(quickBookSelectedPromo.discount_value) / 100 * 100) / 100
                         : Number(quickBookSelectedPromo.discount_value)
                       : 0;
-                    const total = Math.max(0, baseTotal - discount);
+                    const total = Number.isFinite(baseTotal - discount) ? Math.max(0, baseTotal - discount) : 0;
                     const { error: bookErr } = await supabase.from('bookings').insert({
                       room_id: quickBookRoom.id, customer_id: customerId,
                       check_in_date: quickBookForm.check_in, check_in_time: quickBookForm.check_in_time,
                       check_out_date: quickBookForm.check_out, check_out_time: quickBookForm.check_out_time,
                       total_price: total, status: 'confirmed',
                       promo_code_id: quickBookSelectedPromo?.id || null,
-                      discount_amount: discount || null
+                      discount_amount: discount
                     });
                     if (bookErr) throw bookErr;
                     if (quickBookSelectedPromo) {

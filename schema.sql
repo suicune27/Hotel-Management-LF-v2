@@ -930,4 +930,3 @@ END IF; END $$;
 -- Ensure existing calls tables have all columns (safe to re-run)
 ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS offer_data TEXT;
 ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS answer_data TEXT;
-

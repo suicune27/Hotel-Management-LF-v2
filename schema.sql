@@ -877,6 +877,17 @@ DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls insertable by authenticated') THEN CREATE POLICY "Calls insertable by authenticated" ON public.calls FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls updatable by authenticated') THEN CREATE POLICY "Calls updatable by authenticated" ON public.calls FOR UPDATE TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
 
+-- Allow unauthenticated guests (QR/local-access mode) to create and manage calls
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls viewable by anon for guest access') THEN
+  CREATE POLICY "Calls viewable by anon for guest access" ON public.calls FOR SELECT USING (true);
+END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls insertable by anon for guest access') THEN
+  CREATE POLICY "Calls insertable by anon for guest access" ON public.calls FOR INSERT WITH CHECK (true);
+END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls updatable by anon for guest access') THEN
+  CREATE POLICY "Calls updatable by anon for guest access" ON public.calls FOR UPDATE USING (true) WITH CHECK (true);
+END IF; END $$;
+
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='payroll_components' AND policyname='Payroll components viewable by self and admins') THEN CREATE POLICY "Payroll components viewable by self and admins" ON public.payroll_components FOR SELECT TO authenticated USING (public.is_admin() OR EXISTS (SELECT 1 FROM public.payroll_entries pe WHERE pe.id = payroll_entry_id AND pe.user_id = auth.uid())); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='payroll_components' AND policyname='Payroll components manageable by admins') THEN CREATE POLICY "Payroll components manageable by admins" ON public.payroll_components FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;
 

@@ -1,14 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Calendar, RefreshCw, UserCheck, CheckCircle2, AlertCircle, Plus, ArrowRightLeft, User, Grid3X3, Clock, HelpCircle, ShieldCheck } from 'lucide-react';
 import type { Profile } from '../../types';
-import { supabase } from '../../lib/supabase';
 
 interface Shift {
   id: string;
-  day: string;
-  timeLabel: string;
+  day: string; // "Monday", "Tuesday", etc.
+  timeLabel: string; // "Morning (7 AM - 3 PM)", "Swing (3 PM - 11 PM)", "Night (11 PM - 7 AM)"
   assignedUserId: string;
-  role: string;
+  role: string; // "Front Desk", "Housekeeping", "Maintenance"
   status: 'active' | 'swap_pending' | 'swapped';
 }
 
@@ -16,7 +15,7 @@ interface SwapRequest {
   id: string;
   sourceShiftId: string;
   requestingUserId: string;
-  targetUserId: string | null;
+  targetUserId: string | null; // null for public board
   notes: string;
   status: 'pending' | 'accepted' | 'declined';
   created_at: string;
@@ -48,175 +47,87 @@ export default function ShiftScheduleTab({
 }: ShiftScheduleTabProps) {
   const staff = useMemo(() => employees.filter(e => e.role !== 'guest'), [employees]);
 
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [swaps, setSwaps] = useState<SwapRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Load shifts from local storage if available, else seed with high-fidelity defaults
+  const [shifts, setShifts] = useState<Shift[]>(() => {
+    try {
+      const saved = localStorage.getItem('pms_roster_shifts');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+
+    // High fidelity seed rosters
+    const seededShifts: Shift[] = [];
+    let idCounter = 1;
+
+    DAYS_OF_WEEK.forEach(day => {
+      // Seed Housekeeping
+      seededShifts.push({
+        id: `sh-${idCounter++}`,
+        day,
+        timeLabel: "Morning (7 AM - 3 PM)",
+        assignedUserId: staff[0]?.id || 'fallback-1',
+        role: "Housekeeping",
+        status: 'active'
+      });
+      // Seed Front Desk
+      seededShifts.push({
+        id: `sh-${idCounter++}`,
+        day,
+        timeLabel: "Swing (3 PM - 11 PM)",
+        assignedUserId: staff[1]?.id || staff[0]?.id || 'fallback-2',
+        role: "Front Desk",
+        status: 'active'
+      });
+      // Seed Maintenance
+      seededShifts.push({
+        id: `sh-${idCounter++}`,
+        day,
+        timeLabel: "Night (11 PM - 7 AM)",
+        assignedUserId: staff[2]?.id || staff[0]?.id || 'fallback-3',
+        role: "Maintenance",
+        status: 'active'
+      });
+    });
+    return seededShifts;
+  });
+
+  // Load shift swaps
+  const [swaps, setSwaps] = useState<SwapRequest[]>(() => {
+    try {
+      const saved = localStorage.getItem('pms_shift_swaps');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed.filter((s: any) => s.id !== 'swap-1') : [];
+      }
+    } catch {
+      // ignore parsing errors
+    }
+    return [];
+  });
+
+  // Save states
+  useEffect(() => {
+    localStorage.setItem('pms_roster_shifts', JSON.stringify(shifts));
+  }, [shifts]);
+
+  useEffect(() => {
+    localStorage.setItem('pms_shift_swaps', JSON.stringify(swaps));
+  }, [swaps]);
+
+  // Filter schedules
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
   const [selectedDayTab, setSelectedDayTab] = useState<string>('all');
+
+  // Form input state
   const [selectedShiftToSwap, setSelectedShiftToSwap] = useState<string>('');
   const [targetSwapUser, setTargetSwapUser] = useState<string>('');
   const [swapNotes, setSwapNotes] = useState<string>('');
   const [isPostingSwap, setIsPostingSwap] = useState(false);
+
+  // Administrative Quick Schedule Change states
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [overrideUser, setOverrideUser] = useState<string>('');
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const { data: shiftData, error: shiftError } = await supabase.from('shift_schedules').select('*');
-        if (shiftError) throw shiftError;
-
-        let loadedShifts: Shift[] = [];
-        if (shiftData && shiftData.length > 0) {
-          loadedShifts = shiftData.map((s: any) => ({
-            id: s.id,
-            day: s.day,
-            timeLabel: s.time_label,
-            assignedUserId: s.assigned_user_id,
-            role: s.role,
-            status: s.status,
-          }));
-        } else {
-          const seededShifts: Shift[] = [];
-          let idCounter = 1;
-          DAYS_OF_WEEK.forEach(day => {
-            seededShifts.push({
-              id: `sh-${idCounter++}`,
-              day,
-              timeLabel: "Morning (7 AM - 3 PM)",
-              assignedUserId: staff[0]?.id || 'fallback-1',
-              role: "Housekeeping",
-              status: 'active'
-            });
-            seededShifts.push({
-              id: `sh-${idCounter++}`,
-              day,
-              timeLabel: "Swing (3 PM - 11 PM)",
-              assignedUserId: staff[1]?.id || staff[0]?.id || 'fallback-2',
-              role: "Front Desk",
-              status: 'active'
-            });
-            seededShifts.push({
-              id: `sh-${idCounter++}`,
-              day,
-              timeLabel: "Night (11 PM - 7 AM)",
-              assignedUserId: staff[2]?.id || staff[0]?.id || 'fallback-3',
-              role: "Maintenance",
-              status: 'active'
-            });
-          });
-          const seedRecords = seededShifts.map(s => ({
-            day: s.day,
-            time_label: s.timeLabel,
-            assigned_user_id: s.assignedUserId,
-            role: s.role,
-            status: s.status,
-          }));
-          const { data: insertedData, error: insertError } = await supabase.from('shift_schedules').insert(seedRecords).select();
-          if (insertError) throw insertError;
-          loadedShifts = (insertedData || []).map((s: any) => ({
-            id: s.id,
-            day: s.day,
-            timeLabel: s.time_label,
-            assignedUserId: s.assigned_user_id,
-            role: s.role,
-            status: s.status,
-          }));
-        }
-
-        const { data: swapData, error: swapError } = await supabase.from('shift_swaps').select('*');
-        if (swapError) throw swapError;
-
-        const loadedSwaps: SwapRequest[] = (swapData || []).map((s: any) => ({
-          id: s.id,
-          sourceShiftId: s.source_shift_id,
-          requestingUserId: s.requesting_user_id,
-          targetUserId: s.target_user_id,
-          notes: s.notes,
-          status: s.status,
-          created_at: s.created_at,
-        }));
-
-        setShifts(loadedShifts);
-        setSwaps(loadedSwaps);
-      } catch (err) {
-        // console.error('Failed to load shift data:', err);
-        showError('Data Load Error', 'Could not load shift schedules from database.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, []);
-
-  const syncShifts = async (newShifts: Shift[]) => {
-    setShifts(newShifts);
-    try {
-      const records = newShifts.map(s => ({
-        id: s.id,
-        day: s.day,
-        time_label: s.timeLabel,
-        assigned_user_id: s.assignedUserId,
-        role: s.role,
-        status: s.status,
-      }));
-      const { error } = await supabase.from('shift_schedules').upsert(records, { onConflict: 'id' });
-      if (error) throw error;
-    } catch (err) {
-      // console.error('Failed to sync shifts:', err);
-      showError('Sync Error', 'Could not save shift changes to database.');
-    }
-  };
-
-  const syncSwaps = async (newSwaps: SwapRequest[]) => {
-    setSwaps(newSwaps);
-    try {
-      // Separate existing DB records (UUID ids) from new ones (string ids)
-      const existingRecords = newSwaps.filter(s => /^[0-9a-f]{8}-/i.test(s.id)).map(s => ({
-        id: s.id,
-        source_shift_id: s.sourceShiftId,
-        requesting_user_id: s.requestingUserId,
-        target_user_id: s.targetUserId,
-        notes: s.notes,
-        status: s.status,
-        created_at: s.created_at,
-      }));
-      const newRecords = newSwaps.filter(s => !/^[0-9a-f]{8}-/i.test(s.id)).map(s => ({
-        source_shift_id: s.sourceShiftId,
-        requesting_user_id: s.requestingUserId,
-        target_user_id: s.targetUserId,
-        notes: s.notes,
-        status: s.status,
-        created_at: s.created_at,
-      }));
-      if (existingRecords.length > 0) {
-        const { error } = await supabase.from('shift_swaps').upsert(existingRecords, { onConflict: 'id' });
-        if (error) throw error;
-      }
-      if (newRecords.length > 0) {
-        const { data: insertedData, error } = await supabase.from('shift_swaps').insert(newRecords).select();
-        if (error) throw error;
-        if (insertedData) {
-          const mapped: SwapRequest[] = insertedData.map((s: any) => ({
-            id: s.id,
-            sourceShiftId: s.source_shift_id,
-            requestingUserId: s.requesting_user_id,
-            targetUserId: s.target_user_id,
-            notes: s.notes,
-            status: s.status,
-            created_at: s.created_at,
-          }));
-          // Replace just the new items with their DB versions
-          const updated = newSwaps.map(s => (/^[0-9a-f]{8}-/i.test(s.id) ? s : mapped.shift()!));
-          setSwaps(updated);
-        }
-      }
-    } catch (err) {
-      // console.error('Failed to sync swaps:', err);
-      showError('Sync Error', 'Could not save swap changes to database.');
-    }
-  };
 
   const getUserName = (id: string) => {
     if (id === 'fallback-1') return 'Maria Corazon (Housekeeper)';
@@ -242,6 +153,7 @@ export default function ShiftScheduleTab({
     const matchedShift = shifts.find(s => s.id === selectedShiftToSwap);
     if (!matchedShift) return;
 
+    // Check if shift is already pending swap
     if (matchedShift.status === 'swap_pending') {
       showError('Already Listed', 'This shift is already listed on the swap board.');
       return;
@@ -257,9 +169,12 @@ export default function ShiftScheduleTab({
       created_at: new Date().toISOString()
     };
 
-    const updatedShifts = shifts.map(s => s.id === selectedShiftToSwap ? { ...s, status: 'swap_pending' as const } : s);
-    await syncShifts(updatedShifts);
-    await syncSwaps([newRequest, ...swaps]);
+    // Update shift status
+    setShifts(prevShifts => 
+      prevShifts.map(s => s.id === selectedShiftToSwap ? { ...s, status: 'swap_pending' } : s)
+    );
+
+    setSwaps(prevSwaps => [newRequest, ...prevSwaps]);
 
     setSelectedShiftToSwap('');
     setTargetSwapUser('');
@@ -274,21 +189,28 @@ export default function ShiftScheduleTab({
     const shift = shifts.find(s => s.id === request.sourceShiftId);
     if (!shift) return;
 
+    // Find the shift of the approving employee that matches the same day (to swap rosters)
     const approverShiftOnSameDay = shifts.find(s => s.day === shift.day && s.assignedUserId === approvingEmployeeId);
 
-    const updatedShifts = shifts.map(s => {
-      if (s.id === shift.id) {
-        return { ...s, assignedUserId: approvingEmployeeId, status: 'swapped' as const };
-      }
-      if (approverShiftOnSameDay && s.id === approverShiftOnSameDay.id) {
-        return { ...s, assignedUserId: request.requestingUserId, status: 'swapped' as const };
-      }
-      return s;
+    // Update roster assignments
+    setShifts(prevShifts => {
+      return prevShifts.map(s => {
+        if (s.id === shift.id) {
+          // Giver gets receiver's ID (or unassigned if public coverage without direct trade)
+          return { ...s, assignedUserId: approvingEmployeeId, status: 'swapped' as const };
+        }
+        if (approverShiftOnSameDay && s.id === approverShiftOnSameDay.id) {
+          // Receiver gets giver's ID
+          return { ...s, assignedUserId: request.requestingUserId, status: 'swapped' as const };
+        }
+        return s;
+      });
     });
 
-    const updatedSwaps = swaps.map(req => req.id === request.id ? { ...req, status: 'accepted' as const } : req);
-    await syncShifts(updatedShifts);
-    await syncSwaps(updatedSwaps);
+    // Mark swap request as accepted
+    setSwaps(prevSwaps => 
+      prevSwaps.map(req => req.id === request.id ? { ...req, status: 'accepted' as const } : req)
+    );
 
     await logActivity(
       'Shift Swap Approved', 
@@ -297,14 +219,15 @@ export default function ShiftScheduleTab({
     showSuccess('Shift swap accepted and roster has been updated!');
   };
 
-  const handleDeclineSwap = async (requestId: string) => {
+  const handleDeclineSwap = (requestId: string) => {
     const req = swaps.find(r => r.id === requestId);
     if (!req) return;
 
-    const updatedSwaps = swaps.map(item => item.id === requestId ? { ...item, status: 'declined' as const } : item);
-    const updatedShifts = shifts.map(s => s.id === req.sourceShiftId ? { ...s, status: 'active' as const } : s);
-    await syncSwaps(updatedSwaps);
-    await syncShifts(updatedShifts);
+    setSwaps(prev => prev.map(item => item.id === requestId ? { ...item, status: 'declined' as const } : item));
+    // Reset shift status back to active
+    setShifts(prevShifts => 
+      prevShifts.map(s => s.id === req.sourceShiftId ? { ...s, status: 'active' as const } : s)
+    );
 
     showSuccess('Swap request declined.');
   };
@@ -312,19 +235,19 @@ export default function ShiftScheduleTab({
   const handleOverrideSchedule = async () => {
     if (!editingShift || !overrideUser) return;
 
-    const updatedShifts = shifts.map(s => s.id === editingShift.id ? { ...s, assignedUserId: overrideUser, status: 'active' as const } : s);
-    await syncShifts(updatedShifts);
-
+    setShifts(prev => prev.map(s => s.id === editingShift.id ? { ...s, assignedUserId: overrideUser, status: 'active' } : s));
+    
     await logActivity(
       'Schedule Override',
       `Admin changed ${editingShift.day} ${editingShift.timeLabel} shift assignment to ${getUserName(overrideUser)}.`
     );
-
-    showSuccess('Roster modified successfully!');
+    
+    showSuccess(' Roster modified successfully!');
     setEditingShift(null);
     setOverrideUser('');
   };
 
+  // Get shifts filtered by day and role
   const gridShifts = useMemo(() => {
     return shifts.filter(s => {
       const matchRole = selectedRoleFilter === 'all' || s.role.toLowerCase() === selectedRoleFilter.toLowerCase();
@@ -333,20 +256,9 @@ export default function ShiftScheduleTab({
     });
   }, [shifts, selectedRoleFilter, selectedDayTab]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12 animate-fade-in">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-6 h-6 text-brand-600 animate-spin" />
-          <p className="text-xs text-surface-500">Loading shift schedules...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 animate-fade-in font-sans">
-
+      
       {/* HEADER CONTROLS */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-surface-100 shadow-xs">
         <div>
@@ -407,6 +319,7 @@ export default function ShiftScheduleTab({
                 isPending ? 'border-amber-300 bg-amber-50/20' : isSwapped ? 'border-emerald-300 bg-emerald-50/10' : 'border-surface-150'
               }`}
             >
+              {/* Badge status */}
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-extrabold uppercase Tracking-wider text-surface-400 bg-surface-100 px-2 py-0.5 rounded">
                   {shift.role}
@@ -423,6 +336,7 @@ export default function ShiftScheduleTab({
                 )}
               </div>
 
+              {/* Roster description */}
               <div>
                 <p className="text-xs font-black text-surface-800">{shift.day}</p>
                 <div className="flex items-center gap-1 text-[10px] text-surface-500 mt-1">
@@ -440,6 +354,7 @@ export default function ShiftScheduleTab({
                 </div>
               </div>
 
+              {/* Action buttons */}
               <div className="flex justify-end pt-1">
                 <button
                   type="button"
@@ -459,7 +374,7 @@ export default function ShiftScheduleTab({
 
       {/* SWAP BOARD VIEW */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
+        
         {/* SWAP LIST BOARD */}
         <div className="bg-white rounded-2xl border border-surface-100 p-4 shadow-sm lg:col-span-2 space-y-4">
           <div>
@@ -528,7 +443,7 @@ export default function ShiftScheduleTab({
                           <ShieldCheck className="w-3.5 h-3.5" />
                           {item.targetUserId ? `Direct Swap Offer` : `Public Cover Board`}
                         </div>
-
+                        
                         <div className="flex gap-1.5">
                           {userProfile && !requestingMe && (
                             <button

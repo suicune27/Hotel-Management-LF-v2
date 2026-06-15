@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { Room, Profile, GuestOrder, ChatMessage, ChatTyping, StaffCall, Booking, RatePlan, PromoCode } from '../types';
+import { Room, Profile, GuestOrder, ChatMessage, StaffCall, Booking } from '../types';
 import {
   Building, Check, X,
   Loader2, LogOut, Home, Search, Calendar, Bell, MessageSquareText,
@@ -38,22 +38,14 @@ interface FrontDeskPanelProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard') => void;
   userProfile: Profile | null;
   onLogout: () => void;
-  ratePlans?: RatePlan[];
-  promoCodes?: PromoCode[];
 }
 
-export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, ratePlans: propRatePlans, promoCodes: propPromoCodes }: FrontDeskPanelProps) {
+export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: FrontDeskPanelProps) {
   const [activeTab, setActiveTab] = useState<DeskTab>('rooms');
   const [loading, setLoading] = useState(true);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  // Rate Plans & Promo Codes (loaded internally if not provided via props)
-  const [internalRatePlans, setInternalRatePlans] = useState<RatePlan[]>([]);
-  const [internalPromoCodes, setInternalPromoCodes] = useState<PromoCode[]>([]);
-  const ratePlans = propRatePlans ?? internalRatePlans;
-  const promoCodes = propPromoCodes ?? internalPromoCodes;
 
   // Rooms
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -84,7 +76,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
       return [];
     }
   });
-  const [showShortcuts, setShowShortcuts] = useState(false);
   // Dialogs
   const [checkInDialog, setCheckInDialog] = useState<{ room: Room; mode?: 'checkin' | 'reservation'; booking?: Booking } | null>(null);
   const [checkOutDialog, setCheckOutDialog] = useState<{ room: Room } | null>(null);
@@ -98,7 +89,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   const [editCheckOutDate, setEditCheckOutDate] = useState('');
   const [editCheckInTime, setEditCheckInTime] = useState('');
   const [editCheckOutTime, setEditCheckOutTime] = useState('');
-  const [editRecurringRule, setEditRecurringRule] = useState('');
   const [bookingsModal, setBookingsModal] = useState<{ room: Room; bookings: Booking[] } | null>(null);
   const [transferDialog, setTransferDialog] = useState<Room | null>(null);
   const [transferTargetRoomId, setTransferTargetRoomId] = useState<string | null>(null);
@@ -161,16 +151,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   const [invoiceDialog, setInvoiceDialog] = useState<{ booking: Booking; room: Room; charges: any[]; payments: any[]; promoCode?: any } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
 
-  // POS Register
-  const [showPos, setShowPos] = useState(false);
-  const [posItems, setPosItems] = useState<any[]>([]);
-  const [posCart, setPosCart] = useState<{ item: any; qty: number }[]>([]);
-  const [posSearch, setPosSearch] = useState('');
-  const [posCategory, setPosCategory] = useState('');
-  const [posChargeMethod, setPosChargeMethod] = useState<'room' | 'cash'>('room');
-  const [posSelectedBooking, setPosSelectedBooking] = useState('');
-  const [posLoading, setPosLoading] = useState(false);
-
   // Orders
   const [guestOrders, setGuestOrders] = useState<GuestOrder[]>([]);
   const [orderView, setOrderView] = useState<'active' | 'history'>('active');
@@ -182,8 +162,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   const [chatInput, setChatInput] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const [typingUsers, setTypingUsers] = useState<ChatTyping[]>([]);
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Requests
   const [staffCalls, setStaffCalls] = useState<StaffCall[]>([]);
@@ -202,72 +180,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   // Clock
   const [clock, setClock] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
-
-  // Keyboard shortcuts for Front Desk
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
-
-      switch (e.key) {
-        case 'n':
-        case 'N':
-          if (!e.ctrlKey && !e.metaKey) break;
-          e.preventDefault();
-          document.getElementById('new-checkin-btn')?.click();
-          break;
-        case 'f':
-        case 'F':
-          if (!e.ctrlKey && !e.metaKey) break;
-          e.preventDefault();
-          const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="Search"]');
-          searchInput?.focus();
-          break;
-        case 'r':
-        case 'R':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            setActiveTab('reports');
-          }
-          break;
-        case '1':
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            setActiveTab('rooms');
-          }
-          break;
-        case '2':
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            setActiveTab('reports');
-          }
-          break;
-        case '3':
-          if (!e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            setActiveTab('orders');
-          }
-          break;
-        case 'Escape':
-          if (selectedRoom) {
-            setSelectedRoom(null as any);
-            setBookingsModal(null);
-            setCheckOutDialog(null);
-            setCheckInDialog(null);
-            setPaymentDialog(null);
-            setInvoiceDialog(null);
-            setShowPos(false);
-          }
-          break;
-        case '?':
-          e.preventDefault();
-          setShowShortcuts(p => !p);
-          break;
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [selectedRoom, setActiveTab]);
 
   const showSuccess = (msg: string) => {
     const id = Date.now().toString();
@@ -619,6 +531,29 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
         close(); b && setExtendStayDialog({ booking: b, room: selectedRoom });
         break;
       }
+      case 'reset-device-lock': {
+        const b = resolveBooking();
+        if (b) {
+          close();
+          setConfirmDialog({
+            title: 'Reset Device Lock',
+            message: `Are you sure you want to reset the device access lock for Suite #${selectedRoom.room_number}? This will allow the next device loading the link to claim access.`,
+            action: async () => {
+              try {
+                const { error } = await supabase
+                  .from('bookings')
+                  .update({ device_token: null })
+                  .eq('id', b.id);
+                if (error) throw error;
+                showSuccess('Device access lock successfully reset for this suite!');
+              } catch (err: any) {
+                showError('Reset Failed', err.message);
+              }
+            }
+          });
+        }
+        break;
+      }
       case 'transfer-room':
         close(); setTransferDialog(selectedRoom);
         break;
@@ -664,7 +599,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
       case 'modify-reservation': {
         const b = resolveBooking();
         close(); b && setEditBookingDialog({ booking: b, room: selectedRoom });
-        b && setEditRecurringRule(b.recurring_rule || '');
         break;
       }
       case 'cancel-reservation': {
@@ -748,6 +682,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
         return [
           { key: 'view-guest-profile', label: 'Current Guest', icon: User, tone: 'slate', shortcut: 'Alt+G' },
           { key: 'extend-stay', label: 'Extend Stay', icon: CalendarClock, tone: 'blue', shortcut: 'Alt+S' },
+          { key: 'reset-device-lock', label: 'Reset Device Lock', icon: RefreshCw, tone: 'rose', shortcut: 'Alt+L' },
           { key: 'add-guest-order', label: 'Add Order', icon: ShoppingCart, tone: 'amber', shortcut: 'Alt+O', badge: 'HOT' },
           { key: 'add-charges', label: 'Add Charges', icon: Receipt, tone: 'slate', shortcut: 'Alt+A' },
           { key: 'payment-history', label: 'Record Payment', icon: CreditCard, tone: 'emerald', shortcut: 'Alt+P', badge: 'HOT' },
@@ -974,9 +909,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
     const activeP = supabase.from('bookings').select('*, customers(*)').eq('status', 'checked-in');
     const cleanersP = supabase.from('users').select('*').eq('role', 'cleaner').order('full_name', { ascending: true });
     const extsP = supabase.from('stay_extensions').select('*, bookings(*, customers(*), rooms(*))').order('created_at', { ascending: false }).limit(50);
-    const ratePlansP = !propRatePlans ? supabase.from('rate_plans').select('*').order('created_at', { ascending: false }) : Promise.resolve(null);
-    const promoCodesP = !propPromoCodes ? supabase.from('promo_codes').select('*').order('created_at', { ascending: false }) : Promise.resolve(null);
-    const [roomsRes, ordersRes, chatRes, callsRes, expectedRes, activeRes, cleanersRes, extsRes, ratePlansRes, promoCodesRes] = await Promise.all([roomsP, ordersP, chatP, callsP, expectedP, activeP, cleanersP, extsP, ratePlansP, promoCodesP]);
+    const [roomsRes, ordersRes, chatRes, callsRes, expectedRes, activeRes, cleanersRes, extsRes] = await Promise.all([roomsP, ordersP, chatP, callsP, expectedP, activeP, cleanersP, extsP]);
     if (roomsRes && !(roomsRes as any).error && (roomsRes as any).data) setRooms((roomsRes as any).data);
     if (ordersRes && !(ordersRes as any).error && (ordersRes as any).data) setGuestOrders((ordersRes as any).data);
     if (chatRes && !(chatRes as any).error && (chatRes as any).data) setChatMessages((chatRes as any).data);
@@ -991,12 +924,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
     if (extsRes && !(extsRes as any).error && (extsRes as any).data) {
       setStayExtensions((extsRes as any).data);
     }
-    if (ratePlansRes && !(ratePlansRes as any).error && (ratePlansRes as any).data) {
-      setInternalRatePlans((ratePlansRes as any).data);
-    }
-    if (promoCodesRes && !(promoCodesRes as any).error && (promoCodesRes as any).data) {
-      setInternalPromoCodes((promoCodesRes as any).data);
-    }
 
     // Load current user's time tracking status & logs
     try {
@@ -1009,7 +936,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
           supabase.from('activity_logs').select('*').eq('user_id', staffId).order('created_at', { ascending: false }).limit(200)
         ]);
         if (timeRes.error) {
-          // console.error('frontdesk time_entries load error:', timeRes.error);
+          console.error('frontdesk time_entries load error:', timeRes.error);
         }
         if (timeRes.data) {
           setTimeEntries(timeRes.data);
@@ -1039,7 +966,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
         }
       }
     } catch (e) {
-      // console.error("Error loading front desk attendance details:", e);
+      console.error("Error loading front desk attendance details:", e);
     }
 
     setLoading(false);
@@ -1071,7 +998,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
           .limit(100);
 
         if (error) {
-          // console.error('frontdesk realtime time_entries error:', error);
+          console.error('frontdesk realtime time_entries error:', error);
           return;
         }
 
@@ -1192,31 +1119,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
       })
       .subscribe();
 
-      // Typing indicators subscription
-      const typingChannel = supabase
-        .channel('frontdesk-typing')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'chat_typing'
-        }, (payload) => {
-          const typingData = payload.new as ChatTyping;
-          if (typingData.user_role === 'guest' && typingData.booking_id) {
-            setTypingUsers(prev => {
-              const filtered = prev.filter(t => t.user_id !== typingData.user_id);
-              if (typingData.is_typing) {
-                return [...filtered, typingData];
-              }
-              return filtered;
-            });
-          }
-        })
-        .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-      supabase.removeChannel(typingChannel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   // Realtime staff_calls — insert new calls immediately
@@ -1351,27 +1254,12 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
     }
   }, [selectedChatBooking]);
 
-  // Helper: check if a booking's check-out time has passed
-  const isBookingOverstayed = (b: Booking): boolean => {
-    const now = new Date();
-    const timeStr = b.check_out_time;
-    const [t, mod] = timeStr.split(' ');
-    let [h, m] = t.split(':').map(Number);
-    if (mod === 'PM' && h !== 12) h += 12;
-    if (mod === 'AM' && h === 12) h = 0;
-    const checkoutDate = new Date(b.check_out_date);
-    checkoutDate.setHours(h, m, 0, 0);
-    return now > checkoutDate;
-  };
-
   // Derived: only show active guests whose room status also confirms "booked"
   const activeGuests = new Map<string, string>();
-  const overstayedRoomIds = new Set<string>();
   const roomStatusMap = new Map(rooms.map((r) => [r.id, r.status]));
   for (const b of activeBookingsRaw) {
     if (roomStatusMap.get(b.room_id) === 'booked') {
       activeGuests.set(b.room_id, (b as any).customers?.full_name || 'Guest');
-      if (isBookingOverstayed(b)) overstayedRoomIds.add(b.room_id);
     }
   }
 
@@ -1432,7 +1320,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
         check_out_date: editCheckOutDate,
         check_in_time: editCheckInTime,
         check_out_time: editCheckOutTime,
-        recurring_rule: editRecurringRule || null,
       }).eq('id', booking.id);
       if (error) { showError('Edit Failed', error.message); setActionLoading(null); return; }
       await logActivity('Booking Edited', `Suite #${room.room_number} booking updated: ${editCheckInDate} ${editCheckInTime} → ${editCheckOutDate} ${editCheckOutTime}`, booking.id);
@@ -1582,31 +1469,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
     return Array.from(convMap.values()).sort((a, b) => new Date(b.lastMsg.created_at).getTime() - new Date(a.lastMsg.created_at).getTime());
   })();
 
-  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setChatInput(e.target.value);
-    if (!selectedChatBooking || !userProfile?.id) return;
-    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    typingTimerRef.current = setTimeout(() => {
-      supabase.from('chat_typing').upsert({
-        booking_id: selectedChatBooking,
-        user_id: userProfile.id,
-        user_name: userProfile.full_name || 'Front Desk',
-        user_role: 'staff',
-        is_typing: false
-      }, { onConflict: 'booking_id, user_id' }).then(() => {});
-      typingTimerRef.current = null;
-    }, 2000);
-    if (e.target.value.trim()) {
-      supabase.from('chat_typing').upsert({
-        booking_id: selectedChatBooking,
-        user_id: userProfile.id,
-        user_name: userProfile.full_name || 'Front Desk',
-        user_role: 'staff',
-        is_typing: true
-      }, { onConflict: 'booking_id, user_id' }).then(() => {});
-    }
-  };
-
   const sendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || !selectedChatBooking) return;
@@ -1621,18 +1483,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
       });
       if (error) { showError('Chat Error', `Failed to send message: ${error.message}`); return; }
       setChatInput('');
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      typingTimerRef.current = null;
-      if (userProfile?.id) {
-        supabase.from('chat_typing').upsert({
-          booking_id: selectedChatBooking,
-          user_id: userProfile.id,
-          user_name: userProfile.full_name || 'Front Desk',
-          user_role: 'staff',
-          is_typing: false
-        }, { onConflict: 'booking_id, user_id' }).then(() => {});
-      }
-
+      
       // Get guest context
       const bookingMsgs = chatMessages.filter(m => m.booking_id === selectedChatBooking);
       const guestName = bookingMsgs[0]?.bookings?.customers?.full_name || 'Guest';
@@ -1726,146 +1577,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
   const isOvertimeActive = liveNetHours > 8;
   const overtimeLiveAmount = isOvertimeActive ? liveNetHours - 8 : 0;
 
-  // POS derived categories
-  const posCategories = useMemo(() => [...new Set(posItems.map((i: any) => i.menu_categories?.name).filter(Boolean))], [posItems]);
-
-  // POS Register: load items
-  useEffect(() => {
-    if (showPos) {
-      supabase.from('inventory_items').select('*, menu_categories(*)').then(({ data }) => {
-        if (data) setPosItems(data);
-      });
-    }
-  }, [showPos]);
-
-  // POS Cart functions
-  const addToCart = (item: any) => {
-    setPosCart(prev => {
-      const existing = prev.find(c => c.item.id === item.id);
-      if (existing) return prev.map(c => c.item.id === item.id ? { ...c, qty: c.qty + 1 } : c);
-      return [...prev, { item, qty: 1 }];
-    });
-  };
-  const updateQty = (itemId: string, delta: number) => {
-    setPosCart(prev => prev.map(c => c.item.id === itemId ? { ...c, qty: Math.max(1, c.qty + delta) } : c).filter(c => c.qty > 0));
-  };
-  const clearCart = () => setPosCart([]);
-
-  // POS Complete Sale handler
-  const handlePosComplete = async () => {
-    if (posCart.length === 0) return;
-    setPosLoading(true);
-    try {
-      for (const entry of posCart) {
-        const total = Number(entry.item.price) * entry.qty;
-        if (posChargeMethod === 'room' && posSelectedBooking) {
-          await supabase.from('booking_charges').insert({
-            booking_id: posSelectedBooking,
-            description: `POS: ${entry.item.name} x${entry.qty}`,
-            amount: total
-          });
-        } else {
-          await supabase.from('booking_charges').insert({
-            booking_id: null,
-            description: `Cash Sale: ${entry.item.name} x${entry.qty}`,
-            amount: total
-          });
-        }
-      }
-      const grandTotal = posCart.reduce((s, c) => s + Number(c.item.price) * c.qty, 0);
-      showSuccess(`Sale Complete — ${settings.currencySymbol}${grandTotal.toFixed(2)} processed.`);
-      clearCart();
-      setShowPos(false);
-    } catch (err: any) {
-      showError('Sale Failed', err.message || 'Failed to complete sale');
-    } finally {
-      setPosLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex">
-      {/* POS Register Panel */}
-      {showPos && (
-        <div className="fixed inset-0 bg-surface-900/30 backdrop-blur-sm z-50 flex justify-end">
-          <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col">
-            <div className="p-4 border-b border-surface-100 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-surface-900">POS Register</h2>
-              <button onClick={() => { setShowPos(false); clearCart(); }} className="p-1.5 text-surface-400 hover:text-surface-600 rounded-lg hover:bg-surface-100 cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              <input type="text" placeholder="Search items..." value={posSearch} onChange={e => setPosSearch(e.target.value)}
-                className="w-full bg-surface-50 border border-surface-200 rounded-lg py-2 px-3 text-xs mb-4 focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-              <div className="flex gap-1.5 mb-4 flex-wrap">
-                <button onClick={() => setPosCategory('')} className={`px-2.5 py-1 text-[10px] font-bold rounded-full cursor-pointer ${!posCategory ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-500 hover:bg-surface-200'}`}>All</button>
-                {posCategories.map(cat => (
-                  <button key={cat} onClick={() => setPosCategory(cat)} className={`px-2.5 py-1 text-[10px] font-bold rounded-full cursor-pointer ${posCategory === cat ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-500 hover:bg-surface-200'}`}>{cat as string}</button>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {posItems
-                  .filter((item: any) => !posSearch || item.name.toLowerCase().includes(posSearch.toLowerCase()))
-                  .filter((item: any) => !posCategory || (item as any).menu_categories?.name === posCategory)
-                  .map((item: any) => (
-                    <button key={item.id} onClick={() => addToCart(item)}
-                      className="bg-surface-50 hover:bg-surface-100 border border-surface-100 rounded-xl p-3 text-left transition-all cursor-pointer">
-                      <div className="text-xs font-bold text-surface-900 truncate">{item.name}</div>
-                      <div className="text-[10px] text-surface-400 mt-0.5">{settings.currencySymbol}{Number(item.price).toFixed(2)}</div>
-                      <div className="text-[8px] text-surface-400 mt-0.5">Stock: {item.stock_quantity}</div>
-                    </button>
-                  ))}
-              </div>
-            </div>
-            {posCart.length > 0 && (
-              <div className="border-t border-surface-100 p-4 bg-surface-50">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-surface-900">Cart ({posCart.length} items)</span>
-                  <button onClick={clearCart} className="text-[10px] text-rose-500 font-bold cursor-pointer">Clear</button>
-                </div>
-                <div className="max-h-40 overflow-y-auto space-y-1 mb-3">
-                  {posCart.map((entry: any) => (
-                    <div key={entry.item.id} className="flex items-center gap-2 bg-white rounded-lg px-2.5 py-1.5 border border-surface-100">
-                      <span className="flex-1 text-[11px] font-medium text-surface-700 truncate">{entry.item.name}</span>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => updateQty(entry.item.id, -1)} className="w-5 h-5 flex items-center justify-center bg-surface-100 rounded text-[10px] font-bold text-surface-600 hover:bg-surface-200 cursor-pointer">-</button>
-                        <span className="text-xs font-bold text-surface-900 w-5 text-center">{entry.qty}</span>
-                        <button onClick={() => updateQty(entry.item.id, 1)} className="w-5 h-5 flex items-center justify-center bg-surface-100 rounded text-[10px] font-bold text-surface-600 hover:bg-surface-200 cursor-pointer">+</button>
-                      </div>
-                      <span className="text-[11px] font-bold text-surface-900 w-16 text-right">{settings.currencySymbol}{(Number(entry.item.price) * entry.qty).toFixed(2)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-3 mb-3">
-                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-surface-600 cursor-pointer">
-                    <input type="radio" name="posCharge" checked={posChargeMethod === 'room'} onChange={() => setPosChargeMethod('room')} className="accent-surface-900" /> Charge to Room
-                  </label>
-                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-surface-600 cursor-pointer">
-                    <input type="radio" name="posCharge" checked={posChargeMethod === 'cash'} onChange={() => setPosChargeMethod('cash')} className="accent-surface-900" /> Cash Sale
-                  </label>
-                </div>
-                {posChargeMethod === 'room' && (
-                  <select value={posSelectedBooking} onChange={e => setPosSelectedBooking(e.target.value)}
-                    className="w-full bg-white border border-surface-200 rounded-lg py-2 px-3 text-xs mb-3 focus:outline-none cursor-pointer">
-                    <option value="">Select a room...</option>
-                    {activeBookingsRaw.filter((b: any) => b.status === 'checked-in').map((b: any) => (
-                      <option key={b.id} value={b.id}>#{(b as any).rooms?.room_number} - {(b as any).customers?.full_name}</option>
-                    ))}
-                  </select>
-                )}
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs text-surface-500 font-medium">Total</span>
-                  <span className="text-lg font-black text-surface-900">{settings.currencySymbol}{(posCart as any[]).reduce((s: any, c: any) => s + Number(c.item.price) * c.qty, 0).toFixed(2)}</span>
-                </div>
-                <button onClick={handlePosComplete} disabled={posLoading || (posChargeMethod === 'room' && !posSelectedBooking)}
-                  className="w-full py-2.5 bg-surface-900 text-white rounded-xl text-xs font-bold hover:bg-surface-800 disabled:opacity-40 transition-all cursor-pointer">
-                  {posLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : `Complete Sale`}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -1894,14 +1607,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
               )}
               <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-surface-100 rounded-lg font-mono">
                 <Clock className="w-3.5 h-3.5 text-surface-400" />
-                <span className="text-xs font-semibold text-surface-600">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                <span className="text-xs font-semibold text-surface-600">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 <span className="text-[9px] text-surface-400">|</span>
                 <span className="text-[9px] text-surface-400">{clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
               </div>
-              <button onClick={() => setShowPos(true)} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-900 text-white rounded-lg text-[10px] font-bold hover:bg-surface-800 transition-all cursor-pointer">
-                <ShoppingCart className="w-3 h-3" />
-                <span>POS Register</span>
-              </button>
               <button onClick={() => setSearchOpen(true)} className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-50 border border-surface-200 rounded-lg text-[10px] text-surface-400 hover:text-surface-600 transition-all cursor-pointer">
                 <Search className="w-3 h-3" />
                 <span>Search</span>
@@ -1973,8 +1682,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
             )}
 
             {/* ===== ROOMS TAB ===== */}
-            <AnimatePresence>{activeTab === 'rooms' && (
-              <motion.div key="rooms" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }} className="mt-4 flex gap-5">
+            {activeTab === 'rooms' && (
+              <div className="mt-4 flex gap-5">
                 <div className={`flex-1 min-w-0 ${selectedRoom ? 'lg:w-3/5 xl:w-2/3' : ''}`}>
                   <div className="mb-3 rounded-2xl border border-surface-200 bg-white/90 backdrop-blur-sm px-4 py-2.5 flex items-center justify-between gap-3 shadow-sm">
                     <div className="flex items-center gap-2">
@@ -1982,12 +1691,8 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                       <h2 className="text-xs font-bold text-surface-900">Rooms</h2>
                     </div>
                     <div className="flex items-center gap-1.5 text-[9px]">
-                      <button id="new-checkin-btn" onClick={() => setSearchOpen(true)} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1">
-                        <UserPlus className="w-3 h-3" /><span>Check In</span>
-                      </button>
                       <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">{statCounts.available} free</span>
                       <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">{statCounts.booked} occupied</span>
-                      {overstayedRoomIds.size > 0 && <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-bold">{overstayedRoomIds.size} overstayed</span>}
                       <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-bold">{statCounts.reserved} reserved</span>
                       <span className="px-2 py-0.5 rounded-full bg-surface-100 text-surface-500 font-bold">{rooms.length} total</span>
                     </div>
@@ -2019,10 +1724,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                                   <span className="text-xs font-bold text-blue-700">#{r.room_number}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-bold text-surface-900 truncate flex items-center gap-1.5">
-                                    {activeGuests.get(r.id)}
-                                    {overstayedRoomIds.has(r.id) && <span className="text-[8px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200 animate-pulse">OVERSTAY</span>}
-                                  </p>
+                                  <p className="text-sm font-bold text-surface-900 truncate">{activeGuests.get(r.id)}</p>
                                   <p className="text-[10px] text-surface-400">Suite #{r.room_number} · {r.type}</p>
                                 </div>
                                 <button
@@ -2047,7 +1749,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                       actionLoading={actionLoading}
                       statCounts={statCounts}
                       activeGuests={activeGuests}
-                      overstayedRoomIds={overstayedRoomIds}
                       currencySymbol={settings.currencySymbol}
                       onSearchChange={setSearchQuery}
                       onFilterChange={setStatusFilter}
@@ -2057,10 +1758,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                   </div>
                 </div>
 
-              </motion.div>
-            )}</AnimatePresence>
+              </div>
+            )}
 
-            <AnimatePresence>
+            <AnimatePresence mode="wait">
               {selectedRoom && (
                 <RoomModal
                   key={selectedRoom.id + '-' + roomModalRefreshKey}
@@ -2096,7 +1797,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
             </AnimatePresence>
 
             {/* ===== ORDERS TAB ===== */}
-            <AnimatePresence>{activeTab === 'orders' && <motion.div key="orders" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><OrdersContent
+            {activeTab === 'orders' && <OrdersContent
               guestOrders={guestOrders}
               loading={loading}
               orderView={orderView}
@@ -2105,10 +1806,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
               updateOrderStatus={updateOrderStatus}
               setOrderDetailModal={setOrderDetailModal}
               currencySymbol={settings.currencySymbol}
-            /></motion.div>}</AnimatePresence>
+            />}
 
             {/* ===== CHAT TAB ===== */}
-            <AnimatePresence>{activeTab === 'chat' && <motion.div key="chat" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><ChatContent
+            {activeTab === 'chat' && <ChatContent
               chatMessages={chatMessages}
               chatConversations={chatConversations}
               selectedChatBooking={selectedChatBooking}
@@ -2119,19 +1820,17 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
               setChatSearch={setChatSearch}
               sendChatMessage={sendChatMessage}
               chatEndRef={chatEndRef}
-              typingUsers={typingUsers}
-              onChatInputChange={handleChatInputChange}
-            /></motion.div>}</AnimatePresence>
+            />}
 
             {/* ===== REQUESTS TAB ===== */}
-            <AnimatePresence>{activeTab === 'requests' && <motion.div key="requests" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}><RequestsContent
+            {activeTab === 'requests' && <RequestsContent
               staffCalls={staffCalls}
               stayExtensions={stayExtensions}
               loading={loading}
               updateCallStatus={updateCallStatus}
               onApproveExtension={handleApproveExtension}
               onRejectExtension={handleRejectExtension}
-            /></motion.div>}</AnimatePresence>
+            />}
 
             {/* ===== HOUSEKEEPING BOARD TAB ===== */}
             {activeTab === 'housekeeping' && (() => {
@@ -2241,7 +1940,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-surface-900">{(e as any).users?.full_name || 'Staff'}</p>
-                              <p className="text-xs text-surface-400">Clocked in: {new Date(e.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
+                              <p className="text-xs text-surface-400">Clocked in: {new Date(e.clock_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                             </div>
                             <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-full">
                               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -2664,10 +2363,10 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                                 <tr key={entry.id} className="hover:bg-surface-50/50">
                                   <td className="p-4 font-semibold text-surface-900">{formattedDate}</td>
                                   <td className="p-4 text-surface-500">{dayOfWeek}</td>
-                                  <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })}</td>
-                                    <td className="p-4 font-mono">
-                                      {entry.clock_out ? (
-                                        new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true })
+                                  <td className="p-4 font-mono">{entryDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</td>
+                                  <td className="p-4 font-mono">
+                                    {entry.clock_out ? (
+                                      new Date(entry.clock_out).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
                                     ) : (
                                       <span className="text-rose-500 font-bold uppercase text-[9px] animate-pulse">Running Shift</span>
                                     )}
@@ -3076,8 +2775,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
           showSuccess={showSuccess}
           userProfileId={userProfile?.id || ''}
           logActivity={logActivity}
-          ratePlans={ratePlans}
-          promoCodes={promoCodes}
         />
       )}
 
@@ -3144,7 +2841,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                     });
                     if (error) { showError('Assignment Failed', error.message); return; }
                     const { error: roomErr } = await supabase.from('rooms').update({ status: 'cleaning' }).eq('id', housekeepingDialog.room.id);
-                    if (roomErr) // console.error('Room status update failed:', roomErr);
+                    if (roomErr) console.error('Room status update failed:', roomErr);
                     await logActivity('Housekeeping Assigned', `Suite #${housekeepingDialog.room.room_number} assigned to ${c.full_name} for cleaning`);
                     setModalStack(null); setHousekeepingDialog(null);
                     showSuccess(`Cleaner assigned: ${c.full_name}`);
@@ -3315,17 +3012,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
                   </span>
                 </div>
               )}
-              <div>
-                <label className="block text-xs font-semibold text-surface-500 mb-1">Recurring Booking</label>
-                <select value={editRecurringRule} onChange={(e) => setEditRecurringRule(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-surface-900 cursor-pointer">
-                  <option value="">No repeat</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="biweekly">Bi-Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
             </div>
             <div className="flex gap-2 pt-1">
               <button onClick={() => { setModalStack(null); setEditBookingDialog(null); }} className="flex-1 py-2.5 border border-surface-200 text-surface-600 rounded-xl text-xs font-semibold cursor-pointer hover:bg-surface-50 transition-all">Cancel</button>
@@ -3531,23 +3217,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout, rate
         </div>
       )}
 
-      {/* Keyboard Shortcuts Help */}
-      {showShortcuts && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-900/30 backdrop-blur-sm" onClick={() => setShowShortcuts(false)}>
-          <div className="bg-white rounded-2xl border border-surface-100 shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-bold text-surface-900 mb-4">Keyboard Shortcuts</h3>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+N</kbd><span className="text-surface-500">New Check-in</span></div>
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+F</kbd><span className="text-surface-500">Search rooms</span></div>
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Ctrl+R</kbd><span className="text-surface-500">Reports</span></div>
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">1 / 2 / 3</kbd><span className="text-surface-500">Switch tabs</span></div>
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">Esc</kbd><span className="text-surface-500">Close panels</span></div>
-              <div className="flex justify-between"><kbd className="px-2 py-0.5 bg-surface-100 rounded text-[10px] font-mono font-bold">?</kbd><span className="text-surface-500">Toggle this help</span></div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Toasts */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
@@ -3614,7 +3283,7 @@ function ActiveOrdersView({ orders, updateOrderStatus, setOrderDetailModal, curr
                 <div key={order.id} className="px-4 py-2.5 flex items-center gap-3 hover:bg-surface-50/50 transition-colors">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span><span className="text-xs font-semibold text-surface-500">{currencySymbol}{Number(order.total_price).toFixed(2)}</span></div>
-                    <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}{order.notes ? ` — "${order.notes}"` : ''}</p>
+                    <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{order.notes ? ` — "${order.notes}"` : ''}</p>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${order.status === 'pending' ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}`}>{order.status}</span>
                   {order.status === 'pending' && <button onClick={() => updateOrderStatus(order, 'preparing')} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-bold cursor-pointer transition-all whitespace-nowrap">Start</button>}
@@ -3655,7 +3324,7 @@ function HistoryOrdersView({ orders, setOrderDetailModal }: {
             <h3 className="text-xs font-bold text-surface-500 uppercase tracking-wider mb-3 flex items-center gap-2"><Calendar className="w-3.5 h-3.5" />{dateLabel}<span className="text-[10px] text-surface-300 font-normal">({orders.length} order{orders.length !== 1 ? 's' : ''})</span></h3>
             <div className="space-y-2">{orders.map((order) => { const item = order.inventory_items; const guestName = (order.bookings as any)?.customers?.full_name || 'Guest'; const roomNum = (order.bookings as any)?.rooms?.room_number || '?'; return (
               <div key={order.id} className="bg-white rounded-xl border border-surface-100 shadow-sm px-4 py-3 flex items-center gap-3 hover:bg-surface-50/50 transition-colors">
-                <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span></div><p className="text-[10px] text-surface-500">Suite #{roomNum} · {guestName} · {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p></div>
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-surface-900">{item?.name || 'Unknown'}</span><span className="text-xs text-surface-400">x{order.quantity}</span></div><p className="text-[10px] text-surface-500">Suite #{roomNum} · {guestName} · {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>
                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${order.status === 'served' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{order.status}</span>
                 <button onClick={() => setOrderDetailModal(order)} className="p-1.5 text-surface-400 hover:text-surface-600 hover:bg-surface-100 rounded-lg cursor-pointer"><Eye className="w-3.5 h-3.5" /></button>
               </div>
@@ -3670,13 +3339,11 @@ function HistoryOrdersView({ orders, setOrderDetailModal }: {
 function ChatContent({
   chatMessages, chatConversations, selectedChatBooking, setSelectedChatBooking,
   chatInput, setChatInput, chatSearch, setChatSearch, sendChatMessage, chatEndRef,
-  typingUsers, onChatInputChange,
 }: {
   chatMessages: ChatMessage[]; chatConversations: any[]; selectedChatBooking: string | null;
   setSelectedChatBooking: (id: string | null) => void; chatInput: string; setChatInput: (v: string) => void;
   chatSearch: string; setChatSearch: (v: string) => void; sendChatMessage: (e: React.FormEvent) => Promise<void>;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
-  typingUsers: ChatTyping[]; onChatInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   return (
@@ -3735,30 +3402,16 @@ function ChatContent({
                     <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${msg.sender_role === 'staff' ? 'bg-brand-600 text-white rounded-br-md' : 'bg-white border border-surface-200 text-surface-800 rounded-bl-md shadow-sm'}`}>
                       <p className="text-[10px] font-semibold mb-0.5 opacity-80">{msg.sender_role === 'staff' ? 'You' : msg.sender_name}</p>
                       <p className="text-sm leading-relaxed">{msg.message}</p>
-                      <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
+                      <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
                   </div>
                 ))
               )}
               <div ref={chatEndRef} />
             </div>
-            {/* Typing Indicator */}
-            {selectedChatBooking && typingUsers
-              .filter(t => t.booking_id === selectedChatBooking && t.user_role === 'guest' && t.is_typing)
-              .slice(0, 1)
-              .map(t => (
-                <div key={t.user_id} className="flex items-center gap-2 px-4 py-1.5">
-                  <span className="text-[10px] text-surface-400 italic">{t.user_name} is typing</span>
-                  <span className="flex gap-0.5">
-                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '0ms'}} />
-                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '150ms'}} />
-                    <span className="w-1 h-1 rounded-full bg-surface-300 animate-bounce" style={{animationDelay: '300ms'}} />
-                  </span>
-                </div>
-              ))}
             <div className="border-t border-surface-100 p-4 bg-white">
               <form onSubmit={sendChatMessage} className="flex gap-2">
-                <input type="text" value={chatInput} onChange={onChatInputChange} placeholder="Type a reply..." className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors" />
+                <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a reply..." className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors" />
                 <button type="submit" disabled={!chatInput.trim()} className="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-40 disabled:pointer-events-none transition-all flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Send</button>
               </form>
             </div>

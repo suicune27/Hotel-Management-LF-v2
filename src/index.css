@@ -47,84 +47,13 @@
     --brand-600: 79 70 229;
   }
 
-    body {
+  body {
     font-family: var(--font-sans);
     background-color: var(--bg-main);
     color: var(--text-main);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.3s ease, color 0.3s ease;
-  }
-
-  .desktop-titlebar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 40px;
-    padding: 0 12px;
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.96));
-    color: #e5eefb;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
-    -webkit-app-region: drag;
-  }
-
-  .desktop-titlebar__brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-shadow: 0 1px 1px rgba(15, 23, 42, 0.35);
-  }
-
-  .desktop-titlebar__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #818cf8, #22d3ee);
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.16);
-  }
-
-  .desktop-titlebar__controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    -webkit-app-region: no-drag;
-  }
-
-  .desktop-titlebar__button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border: none;
-    border-radius: 10px;
-    color: #e5eefb;
-    background: transparent;
-    cursor: pointer;
-    transition: transform 0.15s ease, background-color 0.2s ease;
-  }
-
-  .desktop-titlebar__button:hover {
-    transform: translateY(-1px);
-    background: rgba(148, 163, 184, 0.14);
-  }
-
-  .desktop-titlebar__button:active {
-    transform: scale(0.97);
-  }
-
-  .desktop-titlebar__button--close:hover {
-    background: rgba(248, 113, 113, 0.18);
-    color: #fecaca;
-  }
-
-  .desktop-titlebar__icon {
-    width: 13px;
-    height: 13px;
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }

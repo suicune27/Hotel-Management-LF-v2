@@ -1,4 +1,4 @@
-import { Building, UtensilsCrossed, MessageSquareText, Bell, Sparkles, BarChart3, Clock, Settings, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Building, UtensilsCrossed, MessageSquareText, Bell, Settings, Clock, BarChart3, Sparkles } from 'lucide-react';
 import type { DeskTab } from './constants';
 import { motion } from 'motion/react';
 
@@ -22,41 +22,26 @@ const TABS: { id: DeskTab; label: string; icon: any }[] = [
 
 export function Sidebar({ activeTab, onTabChange, badges, collapsed, onToggleCollapse }: SidebarProps) {
   return (
-    <nav
-      className={`bg-white border-r border-surface-150/80 flex flex-col transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] select-none ${
-        collapsed ? 'w-[52px]' : 'w-[200px]'
-      } flex-shrink-0`}
-    >
-      {/* Header */}
-      <div className="px-3 h-[52px] flex items-center border-b border-surface-100/60">
+    <nav className={`bg-white border-r border-surface-150 flex flex-col transition-all duration-300 ease-out select-none ${collapsed ? 'w-14' : 'w-52'} flex-shrink-0`}>
+      <div className="p-3 border-b border-surface-100 flex items-center justify-between min-h-[51px]">
         {!collapsed && (
-          <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-indigo-500 text-white flex items-center justify-center text-[10px] font-bold font-mono shadow-sm flex-shrink-0">
-              FD
-            </div>
-            <div className="min-w-0">
-              <p className="text-[12px] font-bold text-surface-900 leading-tight tracking-tight truncate">Front Desk</p>
-              <p className="text-[7px] font-semibold text-brand-500 uppercase tracking-[0.15em]">Concierge</p>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-gradient-to-tr from-brand-650 to-indigo-500 text-white rounded-lg flex items-center justify-center text-[9px] font-bold font-mono shadow-md shadow-brand-500/10">FD</div>
+            <div>
+              <span className="text-[11px] font-black text-surface-900 block tracking-tight leading-none">Front Desk</span>
+              <span className="text-[8px] font-bold text-brand-500 uppercase tracking-widest block mt-0.5">Concierge</span>
             </div>
           </div>
         )}
         <button
           onClick={onToggleCollapse}
-          className={`p-1.5 rounded-lg text-surface-350 hover:text-surface-600 hover:bg-surface-50 transition-all duration-200 cursor-pointer ${
-            collapsed ? 'mx-auto' : 'ml-auto flex-shrink-0'
-          }`}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={`p-1.5 text-surface-300 hover:text-surface-600 hover:bg-surface-50 rounded-xl transition-all cursor-pointer ${collapsed ? 'mx-auto' : 'ml-auto'}`}
         >
-          {collapsed ? (
-            <ChevronRight className="w-3.5 h-3.5" />
-          ) : (
-            <ChevronLeft className="w-3.5 h-3.5" />
-          )}
+          <Building className={`w-3.5 h-3.5 transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
-      {/* Navigation */}
-      <div className="flex-1 py-2.5 space-y-0.5 px-2 overflow-y-auto">
+      <div className="flex-1 py-3 space-y-1 px-2 overflow-y-auto">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -65,25 +50,26 @@ export function Sidebar({ activeTab, onTabChange, badges, collapsed, onToggleCol
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`relative w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer outline-none ${
+              className={`relative w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[11px] font-bold transition-colors cursor-pointer outline-none ${
                 isActive
                   ? 'text-white'
-                  : 'text-surface-400 hover:text-surface-700 hover:bg-surface-50'
+                  : 'text-surface-500 hover:text-surface-800'
               }`}
               title={collapsed ? tab.label : undefined}
             >
               {isActive && (
                 <motion.div
-                  layoutId="fd-active-tab"
-                  className="absolute inset-0 bg-surface-900 rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  layoutId="activeDeskTab"
+                  className="absolute inset-0 bg-surface-900 rounded-xl shadow-md"
+                  transition={{ type: 'spring', stiffness: 350, damping: 28 }}
                   style={{ zIndex: 0 }}
                 />
               )}
+              
               <div className="relative flex-shrink-0 z-10 flex items-center justify-center">
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'scale-110' : ''}`} />
+                <Icon className={`w-3.5 h-3.5 transition-transform duration-300 ${isActive ? 'scale-110' : ''}`} />
                 {badge > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 bg-rose-500 text-white text-[7px] font-black rounded-full flex items-center justify-center px-0.5 border border-white/80 shadow-sm leading-none z-20">
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 bg-rose-500 text-white text-[7px] font-black rounded-full flex items-center justify-center px-0.5 border border-white shadow-xs leading-none z-20">
                     {badge > 9 ? '9+' : badge}
                   </span>
                 )}
@@ -94,10 +80,9 @@ export function Sidebar({ activeTab, onTabChange, badges, collapsed, onToggleCol
         })}
       </div>
 
-      {/* Settings */}
-      <div className="px-2 py-2 border-t border-surface-100/60">
+      <div className="p-2 border-t border-surface-100">
         <button
-          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[11px] font-semibold text-surface-350 hover:bg-surface-50 hover:text-surface-600 transition-all duration-150 cursor-pointer outline-none"
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[11px] font-bold text-surface-400 hover:bg-surface-50 hover:text-surface-700 transition-colors cursor-pointer outline-none"
           title={collapsed ? 'Settings' : undefined}
         >
           <Settings className="w-3.5 h-3.5 flex-shrink-0" />

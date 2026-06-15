@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS public.bookings (
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'checked-in', 'completed', 'cancelled')),
     assigned_employee_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    CONSTRAINT check_booking_dates CHECK (check_out_date > check_in_date)
+    CONSTRAINT check_booking_dates CHECK (check_out_date > check_in_date),
+    CONSTRAINT check_in_not_past CHECK (check_in_date >= CURRENT_DATE)
 );
 
 CREATE TABLE IF NOT EXISTS public.tasks (
@@ -617,44 +618,6 @@ CREATE TABLE IF NOT EXISTS public.rate_plans (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Shift schedules (persisted to DB instead of localStorage)
-CREATE TABLE IF NOT EXISTS public.shift_schedules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    day TEXT NOT NULL,
-    time_label TEXT NOT NULL,
-    assigned_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    role TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'swap_pending', 'swapped')),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.shift_swaps (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_shift_id UUID REFERENCES public.shift_schedules(id) ON DELETE CASCADE NOT NULL,
-    requesting_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    target_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    notes TEXT DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.shift_schedules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shift_swaps ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_schedules' AND policyname='Shift schedules viewable by authenticated') THEN CREATE POLICY "Shift schedules viewable by authenticated" ON public.shift_schedules FOR SELECT TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_schedules' AND policyname='Shift schedules manageable by authenticated') THEN CREATE POLICY "Shift schedules manageable by authenticated" ON public.shift_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_swaps' AND policyname='Shift swaps viewable by authenticated') THEN CREATE POLICY "Shift swaps viewable by authenticated" ON public.shift_swaps FOR SELECT TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='shift_swaps' AND policyname='Shift swaps manageable by authenticated') THEN CREATE POLICY "Shift swaps manageable by authenticated" ON public.shift_swaps FOR ALL TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
-
--- Add public/anon policies for chat_messages (allows local/QR guests to use chat)
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_messages' AND policyname='Chat messages insertable by anon') THEN CREATE POLICY "Chat messages insertable by anon" ON public.chat_messages FOR INSERT WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_messages' AND policyname='Chat messages viewable by anon') THEN CREATE POLICY "Chat messages viewable by anon" ON public.chat_messages FOR SELECT USING (true); END IF; END $$;
-
--- Add public/anon policies for chat_typing (allows local/QR guests to send typing indicators)
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing viewable by anon') THEN CREATE POLICY "Chat typing viewable by anon" ON public.chat_typing FOR SELECT USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing insertable by anon') THEN CREATE POLICY "Chat typing insertable by anon" ON public.chat_typing FOR INSERT WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_typing' AND policyname='Chat typing updatable by anon') THEN CREATE POLICY "Chat typing updatable by anon" ON public.chat_typing FOR UPDATE USING (true) WITH CHECK (true); END IF; END $$;
-
 CREATE TABLE IF NOT EXISTS public.waitlist (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     room_type TEXT NOT NULL,
@@ -680,7 +643,6 @@ ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS recurring_rule TEXT;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES public.booking_groups(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS promo_code_id UUID REFERENCES public.promo_codes(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
-ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS discount_description TEXT;
 
 -- 11. ENABLE RLS ON NEW TABLES
 ALTER TABLE public.booking_groups ENABLE ROW LEVEL SECURITY;
@@ -694,8 +656,6 @@ ALTER TABLE public.waitlist ENABLE ROW LEVEL SECURITY;
 -- 12. RLS POLICIES FOR NEW TABLES
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups viewable by authenticated') THEN CREATE POLICY "Booking groups viewable by authenticated" ON public.booking_groups FOR SELECT TO authenticated USING (true); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups manageable by admins') THEN CREATE POLICY "Booking groups manageable by admins" ON public.booking_groups FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups manageable by all authenticated') THEN CREATE POLICY "Booking groups manageable by all authenticated" ON public.booking_groups FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='booking_groups' AND policyname='Booking groups updatable by all authenticated') THEN CREATE POLICY "Booking groups updatable by all authenticated" ON public.booking_groups FOR UPDATE TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
 
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='housekeeping_tasks' AND policyname='Housekeeping viewable by authenticated') THEN CREATE POLICY "Housekeeping viewable by authenticated" ON public.housekeeping_tasks FOR SELECT TO authenticated USING (true); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='housekeeping_tasks' AND policyname='Housekeeping manageable by admins') THEN CREATE POLICY "Housekeeping manageable by admins" ON public.housekeeping_tasks FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;
@@ -913,203 +873,16 @@ CREATE INDEX IF NOT EXISTS idx_leave_requests_user_dates ON public.leave_request
 CREATE INDEX IF NOT EXISTS idx_payroll_notifications_user_read ON public.payroll_notifications(user_id, read_at);
 
 -- ==========================================
--- 15. CUSTOMER LOYALTY ENHANCEMENTS
+-- GUEST SECURE PORTAL - DEVICE LOCK SCHEMA
 -- ==========================================
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS device_token TEXT;
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS sharing_code TEXT;
 
--- Add computed columns for guest loyalty
-ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS total_visits INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS total_spent NUMERIC(12,2) NOT NULL DEFAULT 0;
-ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS last_visit TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS preferences TEXT;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='bookings' AND policyname='Enable public guest select bookings') THEN
+  CREATE POLICY "Enable public guest select bookings" ON public.bookings FOR SELECT USING (true);
+END IF; END $$;
 
-ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS rate_plan_id UUID REFERENCES public.rate_plans(id) ON DELETE SET NULL;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='bookings' AND policyname='Enable public guest device token registration') THEN
+  CREATE POLICY "Enable public guest device token registration" ON public.bookings FOR UPDATE USING (true) WITH CHECK (true);
+END IF; END $$;
 
-CREATE OR REPLACE FUNCTION public.compute_customer_stats()
-RETURNS TRIGGER AS $$
-BEGIN
-  UPDATE public.customers c
-  SET
-    total_visits = (SELECT COUNT(*) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out'),
-    total_spent = (SELECT COALESCE(SUM(b.total_price), 0) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out'),
-    last_visit = (SELECT MAX(b.check_out_date::timestamp + b.check_out_time::time) FROM public.bookings b WHERE b.customer_id = c.id AND b.status = 'checked-out')
-  WHERE c.id = NEW.customer_id OR c.id = OLD.customer_id;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS trigger_compute_customer_stats ON public.bookings;
-CREATE TRIGGER trigger_compute_customer_stats
-  AFTER INSERT OR UPDATE OF status ON public.bookings
-  FOR EACH ROW
-  WHEN (NEW.status IN ('checked-out', 'cancelled'))
-  EXECUTE FUNCTION public.compute_customer_stats();
-
-CREATE OR REPLACE VIEW public.customer_loyalty_tiers AS
-SELECT
-  c.id,
-  c.full_name,
-  c.email,
-  c.total_visits,
-  c.total_spent,
-  c.last_visit,
-  CASE
-    WHEN c.total_visits >= 20 OR c.total_spent >= 10000 THEN 'Diamond'
-    WHEN c.total_visits >= 10 OR c.total_spent >= 5000 THEN 'Platinum'
-    WHEN c.total_visits >= 5 OR c.total_spent >= 2000 THEN 'Gold'
-    WHEN c.total_visits >= 2 OR c.total_spent >= 500 THEN 'Silver'
-    ELSE 'Bronze'
-  END AS loyalty_tier,
-  CASE
-    WHEN c.total_visits >= 20 OR c.total_spent >= 10000 THEN 25
-    WHEN c.total_visits >= 10 OR c.total_spent >= 5000 THEN 15
-    WHEN c.total_visits >= 5 OR c.total_spent >= 2000 THEN 10
-    WHEN c.total_visits >= 2 OR c.total_spent >= 500 THEN 5
-    ELSE 0
-  END AS discount_percent
-FROM public.customers c
-WHERE c.total_visits > 0 OR c.total_spent > 0;
-
--- ==========================================
--- 16. LOST & FOUND
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.lost_found_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    item_name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('electronics', 'clothing', 'jewelry', 'documents', 'bags', 'keys', 'toys', 'other')),
-    location_found TEXT NOT NULL DEFAULT '',
-    found_by TEXT NOT NULL DEFAULT '',
-    found_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    photo_url TEXT,
-    status TEXT NOT NULL DEFAULT 'unclaimed' CHECK (status IN ('unclaimed', 'claimed', 'returned', 'disposed')),
-    guest_name TEXT,
-    guest_email TEXT,
-    guest_phone TEXT,
-    claim_notes TEXT,
-    claimed_at TIMESTAMP WITH TIME ZONE,
-    returned_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.lost_found_items ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to read lost_found_items') THEN CREATE POLICY "Allow all authenticated users to read lost_found_items" ON public.lost_found_items FOR SELECT TO authenticated USING (true); END IF; END $$;
-
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to insert lost_found_items') THEN CREATE POLICY "Allow all authenticated users to insert lost_found_items" ON public.lost_found_items FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
-
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='lost_found_items' AND policyname='Allow all authenticated users to update lost_found_items') THEN CREATE POLICY "Allow all authenticated users to update lost_found_items" ON public.lost_found_items FOR UPDATE TO authenticated USING (true); END IF; END $$;
-
-CREATE INDEX IF NOT EXISTS idx_lost_found_status ON public.lost_found_items(status);
-CREATE INDEX IF NOT EXISTS idx_lost_found_category ON public.lost_found_items(category);
-
--- ==========================================
--- 17. SOFT DELETE COLUMNS (idempotent)
--- ==========================================
-
-ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.guest_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.booking_charges ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.housekeeping_tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.incidents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.parking_spots ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.contact_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.staff_calls ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.inventory_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE public.lost_found_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
-
--- ==========================================
--- 18. VERSION COLUMNS FOR CONCURRENCY CONTROL
--- ==========================================
-
-ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE public.guest_orders ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE public.housekeeping_tasks ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
-
--- ==========================================
--- 19. SHIFT MANAGEMENT TABLES
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.shift_templates (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    start_time TIME NOT NULL,
-    end_time TIME NOT NULL,
-    break_duration INTEGER NOT NULL DEFAULT 0,
-    description TEXT DEFAULT '',
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS public.employee_shift_assignments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
-    shift_template_id UUID REFERENCES public.shift_templates(id) ON DELETE SET NULL,
-    custom_start_time TIME,
-    custom_end_time TIME,
-    effective_from DATE NOT NULL,
-    effective_to DATE,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- Partial unique index: only one active assignment per user at a time
-CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_shift_assignments_active ON public.employee_shift_assignments (user_id) WHERE is_active = true;
-
-CREATE TABLE IF NOT EXISTS public.shift_assignment_history (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
-    shift_template_id UUID REFERENCES public.shift_templates(id) ON DELETE SET NULL,
-    custom_start_time TIME,
-    custom_end_time TIME,
-    effective_from DATE NOT NULL,
-    effective_to DATE,
-    changed_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    change_reason TEXT DEFAULT '',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- Seed default shift templates
-INSERT INTO public.shift_templates (name, start_time, end_time, break_duration, description) VALUES
-    ('Morning', '07:00', '15:00', 30, 'Morning shift — 7 AM to 3 PM with 30-min break'),
-    ('Afternoon', '15:00', '23:00', 30, 'Afternoon shift — 3 PM to 11 PM with 30-min break'),
-    ('Night', '23:00', '07:00', 30, 'Night shift — 11 PM to 7 AM with 30-min break'),
-    ('Graveyard', '22:00', '06:00', 45, 'Graveyard shift — 10 PM to 6 AM with 45-min break')
-ON CONFLICT DO NOTHING;
-
--- RLS: only admins can manage shift templates and assignments
-ALTER TABLE public.shift_templates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.employee_shift_assignments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shift_assignment_history ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Admin full access on shift_templates" ON public.shift_templates;
-CREATE POLICY "Admin full access on shift_templates" ON public.shift_templates
-    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
-
-DROP POLICY IF EXISTS "All authenticated can view shift_templates" ON public.shift_templates;
-CREATE POLICY "All authenticated can view shift_templates" ON public.shift_templates
-    FOR SELECT USING (auth.role() = 'authenticated');
-
-DROP POLICY IF EXISTS "Admin full access on employee_shift_assignments" ON public.employee_shift_assignments;
-CREATE POLICY "Admin full access on employee_shift_assignments" ON public.employee_shift_assignments
-    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
-
-DROP POLICY IF EXISTS "All authenticated can view employee_shift_assignments" ON public.employee_shift_assignments;
-CREATE POLICY "All authenticated can view employee_shift_assignments" ON public.employee_shift_assignments
-    FOR SELECT USING (auth.role() = 'authenticated');
-
-DROP POLICY IF EXISTS "Admin full access on shift_assignment_history" ON public.shift_assignment_history;
-CREATE POLICY "Admin full access on shift_assignment_history" ON public.shift_assignment_history
-    USING (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK (auth.role() = 'authenticated' AND EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
-
-DROP POLICY IF EXISTS "All authenticated can view shift_assignment_history" ON public.shift_assignment_history;
-CREATE POLICY "All authenticated can view shift_assignment_history" ON public.shift_assignment_history
-    FOR SELECT USING (auth.role() = 'authenticated');

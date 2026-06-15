@@ -63,6 +63,8 @@ export interface Booking {
   recurring_rule?: string | null;
   status: 'pending' | 'confirmed' | 'checked-in' | 'completed' | 'cancelled';
   assigned_employee_id: string | null;
+  device_token?: string | null;
+  sharing_code?: string | null;
   created_at: string;
   rooms?: Room & { hotels?: Hotel };
   customers?: Customer;
@@ -208,8 +210,6 @@ export interface ContactMessage {
   phone: string | null;
   subject: string | null;
   message: string;
-  admin_reply: string | null;
-  replied_at: string | null;
   read_at: string | null;
   created_at: string;
 }
@@ -377,44 +377,6 @@ export interface SalaryAdjustment {
   created_at: string;
 }
 
-export interface ShiftTemplate {
-  id: string;
-  name: string;
-  start_time: string;
-  end_time: string;
-  break_duration: number;
-  description: string;
-  is_active: boolean;
-  created_at: string;
-}
-
-export interface EmployeeShiftAssignment {
-  id: string;
-  user_id: string;
-  shift_template_id: string | null;
-  custom_start_time: string | null;
-  custom_end_time: string | null;
-  effective_from: string;
-  effective_to: string | null;
-  is_active: boolean;
-  created_at: string;
-  shift_templates?: ShiftTemplate;
-  users?: Profile;
-}
-
-export interface ShiftAssignmentHistory {
-  id: string;
-  user_id: string;
-  shift_template_id: string | null;
-  custom_start_time: string | null;
-  custom_end_time: string | null;
-  effective_from: string;
-  effective_to: string | null;
-  changed_by: string;
-  change_reason: string;
-  created_at: string;
-}
-
 export interface BookingGroup {
   id: string;
   name: string;
@@ -499,25 +461,6 @@ export interface RatePlan {
   min_stay_hours: number;
   is_peak: boolean;
   is_active: boolean;
-  created_at: string;
-}
-
-export interface LostItem {
-  id: string;
-  item_name: string;
-  description: string;
-  category: string;
-  location_found: string;
-  found_by: string;
-  found_date: string;
-  photo_url: string | null;
-  status: 'unclaimed' | 'claimed' | 'returned' | 'disposed';
-  guest_name: string | null;
-  guest_email: string | null;
-  guest_phone: string | null;
-  claim_notes: string | null;
-  claimed_at: string | null;
-  returned_at: string | null;
   created_at: string;
 }
 

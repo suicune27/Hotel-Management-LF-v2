@@ -11,6 +11,7 @@ import {
   Send, Phone, Check, ShoppingCart, MapPin, Mail, X, CalendarPlus,
   Receipt, Star, DoorOpen, AlertTriangle, RefreshCw, CreditCard, FileText
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface GuestDashboardProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard' | 'guest-dashboard' | 'guest-access') => void;
@@ -22,18 +23,24 @@ interface GuestDashboardProps {
   bookingUid?: string | null;
 }
 
-type GuestTab = 'bookings' | 'profile' | 'menu' | 'chat' | 'call_staff' | 'extend_stay' | 'billing' | 'orders' | 'feedback';
+type GuestTab = 'bookings' | 'profile' | 'menu' | 'chat' | 'extend_stay' | 'billing' | 'feedback';
 
 export default function GuestDashboard({ onNavigate, userSession, userProfile, onLogout, onProfileUpdate, roomNumber, bookingUid }: GuestDashboardProps) {
   const [activeTab, setActiveTab] = useState<GuestTab>('bookings');
   const [loading, setLoading] = useState(true);
+  const [deviceLocked, setDeviceLocked] = useState(false);
+  const [lockedBooking, setLockedBooking] = useState<Booking | null>(null);
+  const [inputSharingCode, setInputSharingCode] = useState('');
+  const [sharingError, setSharingError] = useState('');
+  const [sharingVerifying, setSharingVerifying] = useState(false);
+  const [generatingCode, setGeneratingCode] = useState(false);
 
   const isLocalAccess = !!roomNumber || !!bookingUid;
   const localId = roomNumber || bookingUid || 'unknown';
   const effectiveProfile: Profile = isLocalAccess
     ? { id: `local-${localId}`, email: `room${localId}@local`, full_name: `Room ${roomNumber || 'Guest'} Guest`, role: 'guest', created_at: new Date().toISOString() }
     : userProfile || { id: '', email: '', full_name: 'Guest', role: 'guest', created_at: new Date().toISOString() };
-  const chatSenderId = effectiveProfile.id;
+  const chatSenderId = isLocalAccess ? null : effectiveProfile.id;
 
   // Core data
   const [customerRecord, setCustomerRecord] = useState<Customer | null>(null);
@@ -51,6 +58,10 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestOrders, setGuestOrders] = useState<GuestOrder[]>([]);
   const [cart, setCart] = useState<{ item: InventoryItem; qty: number }[]>([]);
   const [orderLoading, setOrderLoading] = useState(false);
+  const [diningSubTab, setDiningSubTab] = useState<'menu' | 'history'>('menu');
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [securityCodeInput, setSecurityCodeInput] = useState('');
+  const [securityCodeError, setSecurityCodeError] = useState('');
 
   // Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -64,6 +75,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [staffCalls, setStaffCalls] = useState<StaffCall[]>([]);
   const [callReason, setCallReason] = useState('');
   const [callingStaff, setCallingStaff] = useState(false);
+  const [showCallStaffModal, setShowCallStaffModal] = useState(false);
+  const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
   // Stay extensions
   const [extensions, setExtensions] = useState<StayExtension[]>([]);
@@ -109,11 +122,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   // Checkout request
   const [checkoutRequesting, setCheckoutRequesting] = useState(false);
 
-  // Local access verification
-  const [verified, setVerified] = useState(false);
-  const [verificationName, setVerificationName] = useState('');
-  const [verificationError, setVerificationError] = useState('');
-
   // Scroll chat to bottom when new messages arrive
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -138,16 +146,59 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
       if (bookingUid) {
         // DIRECT ACCESS MODE: Load booking by UID
-          const { data: bookingData } = await supabase
-            .from('bookings')
-            .select('*, rooms(*), customers(*)')
-            .eq('id', bookingUid)
-            .maybeSingle();
+        const { data: bookingData } = await supabase
+          .from('bookings')
+          .select('*, rooms(*)')
+          .eq('id', bookingUid)
+          .maybeSingle();
 
         if (bookingData && bookingData.status === 'checked-in' && (bookingData as any).rooms?.status === 'booked') {
-          setCheckedInBooking(bookingData);
-          setBookings([bookingData]);
-          activeCheckedIn = bookingData;
+          // CHECK DEVICE PORTAL LOCK
+          const dbToken = (bookingData as any).device_token;
+          const localKey = `guest_device_token_${bookingUid}`;
+          const localToken = localStorage.getItem(localKey);
+
+          const params = new URLSearchParams(window.location.search);
+          const urlCode = params.get('code');
+          const dbCode = (bookingData as any).sharing_code;
+
+          let isCompanionAuthorized = false;
+          if (urlCode && dbCode && urlCode.trim().toUpperCase() === dbCode.trim().toUpperCase()) {
+            isCompanionAuthorized = true;
+            if (dbToken) {
+              localStorage.setItem(localKey, dbToken);
+            }
+          }
+
+          if (dbToken) {
+            if (localToken === dbToken || isCompanionAuthorized) {
+              if (isCompanionAuthorized) {
+                window.history.replaceState({}, '', window.location.pathname);
+              }
+              setCheckedInBooking(bookingData);
+              setBookings([bookingData]);
+              activeCheckedIn = bookingData;
+              setDeviceLocked(false);
+              setLockedBooking(null);
+            } else {
+              setDeviceLocked(true);
+              setLockedBooking(bookingData);
+              setLoading(false);
+              return;
+            }
+          } else {
+            // First device claiming access!
+            const generatedToken = `gdev_${bookingUid}_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
+            localStorage.setItem(localKey, generatedToken);
+            await supabase
+              .from('bookings')
+              .update({ device_token: generatedToken })
+              .eq('id', bookingUid);
+
+            setCheckedInBooking(bookingData);
+            setBookings([bookingData]);
+            activeCheckedIn = bookingData;
+          }
         } else if (bookingData) {
           // Orphaned booking (checked-in but room not booked) — clean up
           if (bookingData.status === 'checked-in') {
@@ -168,16 +219,58 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         if (room) {
           const { data: bookingData } = await supabase
             .from('bookings')
-            .select('*, rooms(*), customers(*)')
+            .select('*, rooms(*)')
             .eq('room_id', room.id)
             .eq('status', 'checked-in')
             .maybeSingle();
 
           if (bookingData && (bookingData as any).rooms?.status === 'booked') {
-            setCheckedInBooking(bookingData);
-            setBookings([bookingData]);
-            activeCheckedIn = bookingData;
-            window.history.replaceState({}, '', '/guest-access/' + bookingData.id);
+            // CHECK DEVICE PORTAL LOCK
+            const bId = bookingData.id;
+            const dbToken = (bookingData as any).device_token;
+            const localKey = `guest_device_token_${bId}`;
+            const localToken = localStorage.getItem(localKey);
+
+            const params = new URLSearchParams(window.location.search);
+            const urlCode = params.get('code');
+            const dbCode = (bookingData as any).sharing_code;
+
+            let isCompanionAuthorized = false;
+            if (urlCode && dbCode && urlCode.trim().toUpperCase() === dbCode.trim().toUpperCase()) {
+              isCompanionAuthorized = true;
+              if (dbToken) {
+                localStorage.setItem(localKey, dbToken);
+              }
+            }
+
+            if (dbToken) {
+              if (localToken === dbToken || isCompanionAuthorized) {
+                setCheckedInBooking(bookingData);
+                setBookings([bookingData]);
+                activeCheckedIn = bookingData;
+                window.history.replaceState({}, '', '/guest-access/' + bookingData.id);
+                setDeviceLocked(false);
+                setLockedBooking(null);
+              } else {
+                setDeviceLocked(true);
+                setLockedBooking(bookingData);
+                setLoading(false);
+                return;
+              }
+            } else {
+              // First device claiming access!
+              const generatedToken = `gdev_${bId}_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
+              localStorage.setItem(localKey, generatedToken);
+              await supabase
+                .from('bookings')
+                .update({ device_token: generatedToken })
+                .eq('id', bId);
+
+              setCheckedInBooking(bookingData);
+              setBookings([bookingData]);
+              activeCheckedIn = bookingData;
+              window.history.replaceState({}, '', '/guest-access/' + bookingData.id);
+            }
           } else {
             // Orphaned checked-in booking (room not booked) — clean up
             if (bookingData) {
@@ -230,7 +323,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         await loadBookingData(activeCheckedIn.id);
       }
     } catch (err) {
-      // console.error("Error loading guest data:", err);
+      console.error("Error loading guest data:", err);
     } finally {
       setLoading(false);
     }
@@ -282,15 +375,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           if (prev.find(m => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
-      })
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'chat_messages',
-        filter: `booking_id=eq.${checkedInBooking.id}`
-      }, (payload) => {
-        const updated = payload.new as ChatMessage;
-        setChatMessages(prev => prev.map(m => m.id === updated.id ? { ...m, seen_at: updated.seen_at } : m));
       })
       .subscribe();
 
@@ -613,7 +697,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           message: `🍽️ New Order: ${orderSummary}`
         });
       } catch (chatErr) {
-        // console.warn('Failed to send order chat notification:', chatErr);
+        console.warn('Failed to send order chat notification:', chatErr);
       }
 
       // Refresh orders
@@ -644,10 +728,9 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking || !chatInput.trim()) return;
     setSendingChat(true);
     try {
-      const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatSenderId);
       const { data: newMsgData, error } = await supabase.from('chat_messages').insert({
         booking_id: checkedInBooking.id,
-        sender_id: isValidUuid ? chatSenderId : null,
+        sender_id: chatSenderId,
         sender_name: effectiveProfile.full_name || 'Guest',
         sender_role: 'guest',
         message: chatInput.trim()
@@ -749,7 +832,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           message: `🕐 Extension Request: ${extDesc}${extendReason.trim() ? ` — "${extendReason.trim()}"` : ''}`
         });
       } catch (chatErr) {
-        // console.warn('Failed to send extension chat notification:', chatErr);
+        console.warn('Failed to send extension chat notification:', chatErr);
       }
       setExtendDate('');
       setExtendHours(1);
@@ -807,7 +890,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking) return;
     setCheckoutRequesting(true);
     try {
-      // Create staff call notification
       await supabase.from('staff_calls').insert({
         booking_id: checkedInBooking.id,
         guest_id: effectiveProfile.id,
@@ -816,41 +898,64 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         status: 'pending',
       });
 
-      // Load billing data for invoice preview
-      const [chargesRes, paymentsRes, ordersRes] = await Promise.all([
-        supabase.from('booking_charges').select('*').eq('booking_id', checkedInBooking.id),
-        supabase.from('payments').select('*').eq('booking_id', checkedInBooking.id),
-        supabase.from('guest_orders').select('*, inventory_items(*)').eq('booking_id', checkedInBooking.id),
-      ]);
-
-      const charges = chargesRes.data || [];
-      const payments = paymentsRes.data || [];
-      const orders = ordersRes.data || [];
-
-      const roomRate = checkedInBooking.total_price;
-      const ordersTotal = orders.reduce((s, o) => s + Number(o.total_price), 0);
-      const extraCharges = charges.reduce((s, c) => s + Number(c.amount), 0);
-      const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
-      const grandTotal = roomRate + ordersTotal + extraCharges;
-      const balance = grandTotal - totalPaid;
-
-      setAlertState({
-        title: 'Checkout Requested',
-        message: `Front desk has been notified!\n\nRoom Charges: ${settings.currencySymbol}${roomRate.toFixed(2)}\nOrders: ${settings.currencySymbol}${ordersTotal.toFixed(2)}\nExtras: ${settings.currencySymbol}${extraCharges.toFixed(2)}\nTotal: ${settings.currencySymbol}${grandTotal.toFixed(2)}\nPaid: ${settings.currencySymbol}${totalPaid.toFixed(2)}\nBalance: ${settings.currencySymbol}${balance.toFixed(2)}\n\nPlease wait at the lobby or in your room.`
-      });
-
-      // Also send a chat to front desk
+      // Write checkout request to Chat Messages
+      const roomLabel = checkedInBooking?.rooms?.room_number || roomNumber || 'Suite';
       await supabase.from('chat_messages').insert({
         booking_id: checkedInBooking.id,
         sender_id: chatSenderId,
         sender_name: effectiveProfile.full_name || 'Guest',
         sender_role: 'guest',
-        message: `🧾 Checkout requested. Total: ${settings.currencySymbol}${grandTotal.toFixed(2)}, Balance: ${settings.currencySymbol}${balance.toFixed(2)}`
+        message: `🚪 Checkout Request: I would like to request checking out of Suite ${roomLabel}. Please prepare my outstanding bill.`
       });
+
+      setAlertState({ 
+        title: 'Checkout Requested', 
+        message: 'Front desk has been notified. We have opened the live chat thread so you can discuss your checkout and bill directly with the reception.' 
+      });
+      setActiveTab('chat');
     } catch (err: any) {
       setAlertState({ title: 'Request Failed', message: err.message });
     } finally {
       setCheckoutRequesting(false);
+    }
+  };
+
+  const handleGenerateSharingCode = async () => {
+    if (!checkedInBooking) return;
+    setGeneratingCode(true);
+    try {
+      const code = Math.floor(10000 + Math.random() * 90000).toString();
+      const { error } = await supabase
+        .from('bookings')
+        .update({ sharing_code: code })
+        .eq('id', checkedInBooking.id);
+
+      if (error) throw error;
+      
+      setCheckedInBooking({ ...checkedInBooking, sharing_code: code });
+    } catch (err: any) {
+      setAlertState({ title: 'Generation Failed', message: err.message || 'Could not generate code.' });
+    } finally {
+      setGeneratingCode(false);
+    }
+  };
+
+  const handleResetSharingCode = async () => {
+    if (!checkedInBooking) return;
+    setGeneratingCode(true);
+    try {
+      const { error } = await supabase
+        .from('bookings')
+        .update({ sharing_code: null })
+        .eq('id', checkedInBooking.id);
+
+      if (error) throw error;
+
+      setCheckedInBooking({ ...checkedInBooking, sharing_code: null });
+    } catch (err: any) {
+      setAlertState({ title: 'Reset Failed', message: err.message || 'Could not reset code.' });
+    } finally {
+      setGeneratingCode(false);
     }
   };
 
@@ -860,11 +965,9 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   ];
   if (hasActiveStay) {
     guestTabs.push(
-      { id: 'orders', label: 'My Orders', icon: ShoppingCart },
-      { id: 'billing', label: 'My Bill', icon: Receipt },
       { id: 'menu', label: 'Order Food', icon: UtensilsCrossed },
+      { id: 'billing', label: 'My Bill', icon: Receipt },
       { id: 'chat', label: 'Chat Front Desk', icon: MessageSquareText },
-      { id: 'call_staff', label: 'Call Staff', icon: Bell },
       { id: 'extend_stay', label: 'Extend Stay', icon: Clock },
       { id: 'feedback', label: 'Feedback', icon: Star },
     );
@@ -876,66 +979,123 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const unreadChatCount = checkedInBooking ? chatMessages.filter(m => m.sender_role === 'staff' && !m.seen_at).length : 0;
   const pendingCallCount = staffCalls.filter(c => c.status === 'pending').length;
 
-  const guestName = checkedInBooking?.customers?.full_name || '';
+  if (deviceLocked) {
+    return (
+      <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex flex-col items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3, ease: 'easeOut' }}
+          className="bg-white border border-surface-200/80 rounded-2xl p-8 max-w-sm w-full shadow-lg text-center"
+        >
+          <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-100 shadow-sm animate-pulse">
+            <DoorOpen className="w-8 h-8 text-rose-500" />
+          </div>
+          <h2 className="text-xl font-bold text-surface-900 tracking-tight mb-3">
+            Access Restricted to Original Device
+          </h2>
+          <p className="text-xs text-surface-500 leading-relaxed mb-6 font-sans">
+            For hotel security, this Guest Room Portal has been securely locked to the first device that accessed this link. 
+          </p>
+          <div className="bg-surface-50 border border-surface-200/60 rounded-xl p-4 text-xs text-left mb-6 space-y-2 font-mono text-surface-600">
+            <p className="flex items-center gap-1.5">🔒 <span><strong>Policy:</strong> One Device Lock</span></p>
+            <p className="flex items-center gap-1.5">🔑 <span><strong>Status:</strong> Key Mismatch</span></p>
+            <p className="flex items-center gap-1.5 truncate"><span>📌 <strong>Suite ID:</strong> {roomNumber ? `Suite #${roomNumber}` : 'Room Access Link'}</span></p>
+          </div>
+
+          <form 
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!inputSharingCode.trim()) return;
+              setSharingError('');
+              setSharingVerifying(true);
+              try {
+                const targetBookingId = bookingUid || lockedBooking?.id;
+                if (!targetBookingId) {
+                  setSharingError('Unable to identify booking context.');
+                  return;
+                }
+                const { data: bData } = await supabase
+                  .from('bookings')
+                  .select('*')
+                  .eq('id', targetBookingId)
+                  .maybeSingle();
+
+                if (bData && bData.sharing_code && bData.sharing_code.toUpperCase() === inputSharingCode.trim().toUpperCase()) {
+                  const localKey = `guest_device_token_${bData.id}`;
+                  localStorage.setItem(localKey, bData.device_token);
+                  setDeviceLocked(false);
+                  setLockedBooking(null);
+                  setInputSharingCode('');
+                  await loadGuestData();
+                } else {
+                  setSharingError('Invalid security sharing code. Please check with the main device holder.');
+                }
+              } catch (err: any) {
+                setSharingError(err.message || 'Verification failed. Try again.');
+              } finally {
+                setSharingVerifying(false);
+              }
+            }}
+            className="border-t border-surface-100 pt-5 text-left mb-6"
+          >
+            <h4 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-2">
+              Have a Companion Access Code?
+            </h4>
+            <p className="text-[11px] text-surface-500 leading-relaxed mb-3">
+              Enter the 5-digit security sharing code generated by the main device to securely authorize this companion device.
+            </p>
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                placeholder="5-Digit Code"
+                maxLength={10}
+                value={inputSharingCode}
+                onChange={(e) => {
+                  setInputSharingCode(e.target.value);
+                  setSharingError('');
+                }}
+                className="flex-1 bg-surface-50 border border-surface-200/80 rounded-xl px-3 py-2 text-xs font-mono font-bold text-surface-800 tracking-widest placeholder:tracking-normal placeholder:font-sans focus:outline-none focus:border-emerald-500 uppercase text-center"
+              />
+              <button
+                type="submit"
+                disabled={sharingVerifying || !inputSharingCode.trim()}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs cursor-pointer transition-colors flex items-center gap-1.5"
+              >
+                {sharingVerifying ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Authorize'}
+              </button>
+            </div>
+            {sharingError && (
+              <p className="text-[10px] text-rose-500 font-medium mt-2 leading-relaxed">
+                ⚠️ {sharingError}
+              </p>
+            )}
+          </form>
+
+          <p className="text-[11px] text-surface-400 mb-6 italic leading-relaxed">
+            Otherwise, if you cleared private cookies, or need to authorize a new phone or tablet, please ask the original device holder to share access or visit the Front Desk.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-surface-100 hover:bg-surface-200 text-surface-700 hover:text-surface-900 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+            >
+              Retry
+            </button>
+            <a 
+              href="tel:+123456789" 
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5"
+            >
+              <Phone className="w-3.5 h-3.5" /> Call Desk
+            </a>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex flex-col">
-
-      {/* Local Access Verification Gate */}
-      {isLocalAccess && !verified && checkedInBooking && (
-        <div className="fixed inset-0 z-[100] bg-white flex items-center justify-center p-6">
-          <div className="w-full max-w-sm mx-auto text-center space-y-6">
-            <div className="w-16 h-16 mx-auto bg-emerald-50 rounded-2xl flex items-center justify-center border border-emerald-200">
-              <DoorOpen className="w-8 h-8 text-emerald-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-surface-900">Verify Your Identity</h2>
-              <p className="text-sm text-surface-500 mt-2">
-                For your security, please enter the name you registered under to access your booking.
-              </p>
-            </div>
-            <div className="space-y-3">
-              <input
-                type="text"
-                value={verificationName}
-                onChange={(e) => { setVerificationName(e.target.value); setVerificationError(''); }}
-                placeholder="Enter your registered name"
-                className="w-full px-4 py-3 bg-surface-50 border border-surface-200 rounded-xl text-sm text-center focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (verificationName.trim().toLowerCase() === guestName.trim().toLowerCase() ||
-                        guestName.toLowerCase().includes(verificationName.trim().toLowerCase())) {
-                      setVerified(true);
-                    } else {
-                      setVerificationError('Name does not match. Please try again.');
-                    }
-                  }
-                }}
-              />
-              {verificationError && (
-                <p className="text-xs text-rose-600 font-medium flex items-center justify-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  {verificationError}
-                </p>
-              )}
-              <button
-                onClick={() => {
-                  if (verificationName.trim().toLowerCase() === guestName.trim().toLowerCase() ||
-                      guestName.toLowerCase().includes(verificationName.trim().toLowerCase())) {
-                    setVerified(true);
-                  } else {
-                    setVerificationError('Name does not match. Please try again.');
-                  }
-                }}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm transition-all cursor-pointer active:scale-[0.98]"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="flex-1">
         <header className="sticky top-0 bg-white/95 backdrop-blur-md z-40 border-b border-surface-100 shadow-sm">
@@ -943,7 +1103,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
             <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => { if (!isLocalAccess) onNavigate('login'); }}>
               <span className="p-1.5 sm:p-2 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white rounded-lg font-bold text-sm sm:text-base font-mono">GH</span>
               <div className="min-w-0">
-                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber || checkedInBooking?.rooms?.room_number || bookingUid?.slice(0, 8) || '—'}` : 'Guest Portal'}</span>
+                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber}` : 'Guest Portal'}</span>
                 <span className="text-[8px] sm:text-[9px] block font-mono text-emerald-600 tracking-wider font-bold uppercase -mt-0.5 truncate">
                   {isLocalAccess ? 'Local Network Access' : `Welcome, ${effectiveProfile.full_name?.split(' ')[0] || 'Guest'}`}
                 </span>
@@ -984,7 +1144,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
             {guestTabs.map((tab) => {
               const TabIcon = tab.icon;
               const isActive = activeTab === tab.id;
-              const count = tab.id === 'chat' ? unreadChatCount : tab.id === 'call_staff' ? pendingCallCount : 0;
+              const count = tab.id === 'chat' ? unreadChatCount : 0;
               return (
                 <button
                   key={tab.id}
@@ -1001,9 +1161,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                     <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-bold rounded-full bg-emerald-100 text-emerald-700 leading-none">
                       {count > 99 ? '99+' : count}
                     </span>
-                  )}
-                  {tab.id === 'call_staff' && pendingCallCount > 0 && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse absolute -top-0.5 -right-0.5" />
                   )}
                 </button>
               );
@@ -1100,14 +1257,88 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                           <button onClick={() => setActiveTab('chat')} className="px-3 sm:px-4 py-2 bg-white hover:bg-surface-50 border border-emerald-200 text-emerald-700 rounded-lg text-[10px] sm:text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all">
                             <MessageSquareText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Chat Desk
                           </button>
-                          <button onClick={() => setActiveTab('call_staff')} className="px-3 sm:px-4 py-2 bg-white hover:bg-surface-50 border border-emerald-200 text-emerald-700 rounded-lg text-[10px] sm:text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all">
-                            <Bell className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Call Staff
-                          </button>
                           <button onClick={() => setActiveTab('extend_stay')} className="px-3 sm:px-4 py-2 bg-white hover:bg-surface-50 border border-emerald-200 text-emerald-700 rounded-lg text-[10px] sm:text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all">
                             <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Extend Stay
                           </button>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-5 space-y-4">
+                      <div className="flex items-center justify-between border-b border-surface-50 pb-3">
+                        <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                          Companion Access Sharing
+                        </h3>
+                        <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[9px] font-bold uppercase rounded-md tracking-wider">
+                          Secure Key Lock
+                        </span>
+                      </div>
+                      
+                      {checkedInBooking?.sharing_code ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-center">
+                          <div className="space-y-3">
+                            <p className="text-xs text-surface-500 leading-relaxed">
+                              This guest portal has a security one-device lock active. Share access with your companions (e.g., spouse or family) using this 5-digit authorization code or let them scan the QR code to log in instantly.
+                            </p>
+                            <div className="bg-indigo-50/50 border border-indigo-100/60 rounded-xl p-4 text-center">
+                              <span className="text-[10px] text-indigo-500 uppercase font-bold tracking-wider block mb-1">Companion Security Code</span>
+                              <span className="text-3xl font-extrabold tracking-widest font-mono text-indigo-700 block">
+                                {checkedInBooking.sharing_code}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={handleGenerateSharingCode}
+                                disabled={generatingCode}
+                                className="flex-1 py-1.5 border border-surface-200 hover:border-surface-300 text-surface-700 font-semibold rounded-lg text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" /> New Code
+                              </button>
+                              <button 
+                                onClick={handleResetSharingCode}
+                                disabled={generatingCode}
+                                className="py-1.5 px-3 border border-rose-200 hover:bg-rose-50 text-rose-600 font-semibold rounded-lg text-xs cursor-pointer flex items-center justify-center transition-colors disabled:opacity-50"
+                                title="Revoke access code"
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col items-center justify-center p-4 bg-surface-50 rounded-2xl border border-surface-100/60 shadow-inner">
+                            <div className="bg-white p-3 rounded-xl shadow-sm border border-surface-100">
+                              <QRCodeSVG 
+                                value={`${window.location.origin}/guest-access/${checkedInBooking.id}?code=${checkedInBooking.sharing_code}`} 
+                                size={128} 
+                                level="H" 
+                              />
+                            </div>
+                            <span className="text-[10px] font-mono text-surface-500 mt-2 text-center">
+                              Scan with companion phone to instantly log in
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 space-y-3">
+                          <div className="w-12 h-12 bg-surface-50 rounded-xl border border-surface-100 flex items-center justify-center mx-auto text-surface-400">
+                            🔒
+                          </div>
+                          <div className="max-w-xs mx-auto">
+                            <h4 className="text-xs font-semibold text-surface-800">No active sharing code</h4>
+                            <p className="text-[11px] text-surface-400 mt-0.5 leading-relaxed">
+                              Generate a temporary companion sharing code to authorize your spouse, friends, or other family devices to log into this Suite from their phones.
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleGenerateSharingCode}
+                            disabled={generatingCode}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-lg text-xs cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-sm"
+                          >
+                            {generatingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Create Companion Access Code'}
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-5">
@@ -1217,8 +1448,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                                     <button onClick={() => setActiveTab('menu')} className="text-xs font-semibold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 rounded-lg border border-emerald-100 transition-colors cursor-pointer">
                                       <UtensilsCrossed className="w-3 h-3" /> Order
                                     </button>
-                                    <button onClick={() => setActiveTab('call_staff')} className="text-xs font-semibold text-amber-700 hover:bg-amber-100 flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 rounded-lg border border-amber-100 transition-colors cursor-pointer">
-                                      <Bell className="w-3 h-3" /> Help
+                                    <button onClick={() => setActiveTab('chat')} className="text-xs font-semibold text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 px-2.5 py-1.5 bg-indigo-50 rounded-lg border border-indigo-100 transition-colors cursor-pointer">
+                                      <MessageSquareText className="w-3 h-3" /> Chat Desk
                                     </button>
                                   </>
                                 )}
@@ -1241,143 +1472,230 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
               {/* ===== MENU ORDERING TAB ===== */}
               {activeTab === 'menu' && hasActiveStay && (
                 <div className="space-y-6">
-                  <div className="flex items-center justify-between">
+                  {/* Dining Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                      <h2 className="text-lg font-bold text-surface-900 tracking-tight">Room Service Menu</h2>
-                      <p className="text-xs text-surface-400 mt-0.5">Browse our menu and order food directly to your suite.</p>
+                      <h2 className="text-lg font-bold text-surface-900 tracking-tight">Suite Dining & Room Service</h2>
+                      <p className="text-xs text-surface-400 mt-0.5">Order chef-curated food and track your dining expenses directly.</p>
                     </div>
                     {cart.length > 0 && (
-                      <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-bold">
-                        {cart.length} item{cart.length > 1 ? 's' : ''} in cart
+                      <span className="self-start px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-bold animate-pulse">
+                        🛒 {cart.length} item{cart.length > 1 ? 's' : ''} in cart
                       </span>
                     )}
                   </div>
 
-                  <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
-                    <div className="lg:col-span-2 space-y-6">
-                      {menuCategories.map(cat => {
-                        const items = menuItems.filter(i => i.category_id === cat.id);
-                        if (items.length === 0) return null;
-                        return (
-                          <div key={cat.id} className="bg-white rounded-xl border border-surface-100 shadow-sm overflow-hidden">
-                            <div className="px-5 py-3 bg-surface-50/80 border-b border-surface-100 flex items-center justify-between">
-                              <h3 className="text-sm font-bold text-surface-900">{cat.name}</h3>
-                              <span className="text-[10px] text-surface-400 font-medium">{items.length} item{items.length > 1 ? 's' : ''}</span>
-                            </div>
-                            <div className="divide-y divide-surface-50">
-                              {items.map(item => (
-                                <div key={item.id} className="px-5 py-3 flex items-center gap-4 hover:bg-surface-50/50 transition-colors">
-                              {item.image_url ? (
-                                    <img src={item.image_url} alt={item.name} className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl object-cover border border-surface-200 flex-shrink-0" />
-                                  ) : (
-                                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br from-surface-50 to-surface-100 flex items-center justify-center text-surface-400 flex-shrink-0 border border-surface-200">
-                                      <UtensilsCrossed className="w-5 h-5 sm:w-6 sm:h-6" />
+                  {/* Dining Cabinet Subtabs */}
+                  <div className="flex bg-surface-100/80 rounded-xl p-1 max-w-xs sm:max-w-sm">
+                    <button
+                      type="button"
+                      onClick={() => setDiningSubTab('menu')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        diningSubTab === 'menu'
+                          ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100/60'
+                          : 'text-surface-500 hover:text-surface-700'
+                      }`}
+                    >
+                      <UtensilsCrossed className="w-3.5 h-3.5" /> Order Menu
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDiningSubTab('history')}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all relative cursor-pointer ${
+                        diningSubTab === 'history'
+                          ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100/60'
+                          : 'text-surface-500 hover:text-surface-700'
+                      }`}
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5" /> My Orders
+                      {guestOrders.length > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 bg-emerald-600 text-white text-[8px] font-bold rounded-full leading-none">
+                          {guestOrders.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  {diningSubTab === 'menu' ? (
+                    <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
+                      <div className="lg:col-span-2 space-y-6">
+                        {menuCategories.map(cat => {
+                          const items = menuItems.filter(i => i.category_id === cat.id);
+                          if (items.length === 0) return null;
+                          return (
+                            <div key={cat.id} className="bg-white rounded-xl border border-surface-100 shadow-sm overflow-hidden">
+                              <div className="px-5 py-3 bg-surface-50/80 border-b border-surface-100 flex items-center justify-between">
+                                <h3 className="text-sm font-bold text-surface-900">{cat.name}</h3>
+                                <span className="text-[10px] text-surface-400 font-medium">{items.length} item{items.length > 1 ? 's' : ''}</span>
+                              </div>
+                              <div className="divide-y divide-surface-50">
+                                {items.map(item => (
+                                  <div key={item.id} className="px-5 py-3 flex items-center gap-4 hover:bg-surface-50/50 transition-colors">
+                                    {item.image_url ? (
+                                      <img src={item.image_url} alt={item.name} className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl object-cover border border-surface-200 flex-shrink-0" />
+                                    ) : (
+                                      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br from-surface-50 to-surface-100 flex items-center justify-center text-surface-400 flex-shrink-0 border border-surface-200">
+                                        <UtensilsCrossed className="w-5 h-5 sm:w-6 sm:h-6" />
+                                      </div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center justify-between">
+                                        <p className="text-xs sm:text-sm font-semibold text-surface-900 truncate">{item.name}</p>
+                                        <p className="text-[10px] sm:text-xs font-bold text-emerald-600 ml-2 whitespace-nowrap">{settings.currencySymbol}{Number(item.price).toFixed(2)}</p>
+                                      </div>
+                                      {item.description && <p className="text-[10px] sm:text-[11px] text-surface-400 mt-0.5 leading-relaxed">{item.description}</p>}
                                     </div>
-                                  )}
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between">
-                                      <p className="text-xs sm:text-sm font-semibold text-surface-900 truncate">{item.name}</p>
-                                      <p className="text-[10px] sm:text-xs font-bold text-emerald-600 ml-2 whitespace-nowrap">{settings.currencySymbol}{Number(item.price).toFixed(2)}</p>
+                                    <div className="flex items-center gap-1 sm:gap-2 ml-1 sm:ml-2">
+                                      <span className="text-[9px] sm:text-[10px] font-medium hidden sm:inline text-surface-400">
+                                        {Number(item.stock_quantity)} left
+                                      </span>
+                                      <button
+                                        onClick={() => addToCart(item)}
+                                        disabled={Number(item.stock_quantity) <= 0}
+                                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-surface-200 text-white rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                                      >
+                                        <Plus className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
-                                    {item.description && <p className="text-[10px] sm:text-[11px] text-surface-400 mt-0.5 leading-relaxed">{item.description}</p>}
                                   </div>
-                                  <div className="flex items-center gap-1 sm:gap-2 ml-1 sm:ml-2">
-                                    <span className="text-[9px] sm:text-[10px] font-medium hidden sm:inline ${Number(item.stock_quantity) <= 3 ? 'text-amber-600' : 'text-surface-400'}">
-                                      {Number(item.stock_quantity)} left
-                                    </span>
-                                    <button
-                                      onClick={() => addToCart(item)}
-                                      disabled={Number(item.stock_quantity) <= 0}
-                                      className="p-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-surface-200 text-white rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed shadow-sm hover:shadow-md"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-4 sm:p-5">
+                          <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider flex items-center gap-1.5 mb-4">
+                            <ShoppingCart className="w-4 h-4 text-emerald-600" /> Your Cart
+                          </h3>
+                          {cart.length === 0 ? (
+                            <div className="text-center py-8">
+                              <ShoppingCart className="w-8 h-8 text-surface-200 mx-auto mb-2" />
+                              <p className="text-xs text-surface-400">Your cart is empty.</p>
+                              <p className="text-[10px] text-surface-300 mt-0.5">Browse and add items from the menu.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-1 mb-4">
+                              {cart.map(entry => (
+                                <div key={entry.item.id} className="flex items-center justify-between py-2 border-b border-surface-50 last:border-0">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-semibold text-surface-800 truncate">{entry.item.name}</p>
+                                    <p className="text-[10px] text-surface-400">{settings.currencySymbol}{Number(entry.item.price).toFixed(2)} each</p>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 ml-2">
+                                    <button onClick={() => removeFromCart(entry.item.id)} className="p-0.5 bg-surface-100 hover:bg-surface-200 rounded cursor-pointer transition-colors">
+                                      <Minus className="w-3 h-3 text-surface-600" />
+                                    </button>
+                                    <span className="text-xs font-bold text-surface-900 w-5 text-center tabular-nums">{entry.qty}</span>
+                                    <button onClick={() => addToCart(entry.item)} disabled={entry.qty >= Number(entry.item.stock_quantity)} className="p-0.5 bg-surface-100 hover:bg-surface-200 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                                      <Plus className="w-3 h-3 text-surface-600" />
                                     </button>
                                   </div>
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-5">
-                        <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider flex items-center gap-1.5 mb-4">
-                          <ShoppingCart className="w-4 h-4 text-emerald-600" /> Your Cart
-                        </h3>
-                        {cart.length === 0 ? (
-                          <div className="text-center py-8">
-                            <ShoppingCart className="w-8 h-8 text-surface-200 mx-auto mb-2" />
-                            <p className="text-xs text-surface-400">Your cart is empty.</p>
-                            <p className="text-[10px] text-surface-300 mt-0.5">Browse and add items from the menu.</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1 mb-4">
-                            {cart.map(entry => (
-                              <div key={entry.item.id} className="flex items-center justify-between py-2 border-b border-surface-50 last:border-0">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-semibold text-surface-800 truncate">{entry.item.name}</p>
-                                  <p className="text-[10px] text-surface-400">{settings.currencySymbol}{Number(entry.item.price).toFixed(2)} each</p>
-                                </div>
-                                <div className="flex items-center gap-1.5 ml-2">
-                                  <button onClick={() => removeFromCart(entry.item.id)} className="p-0.5 bg-surface-100 hover:bg-surface-200 rounded cursor-pointer transition-colors">
-                                    <Minus className="w-3 h-3 text-surface-600" />
-                                  </button>
-                                  <span className="text-xs font-bold text-surface-900 w-5 text-center tabular-nums">{entry.qty}</span>
-                                  <button onClick={() => addToCart(entry.item)} disabled={entry.qty >= Number(entry.item.stock_quantity)} className="p-0.5 bg-surface-100 hover:bg-surface-200 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-                                    <Plus className="w-3 h-3 text-surface-600" />
-                                  </button>
-                                </div>
+                          )}
+                          {cart.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex justify-between font-bold text-sm text-surface-900 border-t border-surface-100 pt-2">
+                                <span>Total</span>
+                                <span className="text-emerald-700">{settings.currencySymbol}{cartTotal.toFixed(2)}</span>
                               </div>
-                            ))}
-                          </div>
-                        )}
-                        {cart.length > 0 && (
-                          <div className="space-y-2">
-                            <div className="flex justify-between font-bold text-sm text-surface-900 border-t border-surface-100 pt-2">
-                              <span>Total</span>
-                              <span className="text-emerald-700">{settings.currencySymbol}{cartTotal.toFixed(2)}</span>
+                              <button
+                                onClick={() => {
+                                  setSecurityCodeInput('');
+                                  setSecurityCodeError('');
+                                  setShowSecurityModal(true);
+                                }}
+                                disabled={orderLoading}
+                                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-surface-300 text-white rounded-lg text-xs font-semibold cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1.5 transition-all shadow-sm hover:shadow-md"
+                              >
+                                {orderLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                <span>{orderLoading ? 'Placing Order...' : `Place Order (${cart.length} items)`}</span>
+                              </button>
                             </div>
-                            <button
-                              onClick={placeOrder}
-                              disabled={orderLoading}
-                              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-surface-300 text-white rounded-lg text-xs font-semibold cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-1.5 transition-all shadow-sm hover:shadow-md"
-                            >
-                              {orderLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                              <span>{orderLoading ? 'Placing Order...' : `Place Order (${cart.length} items)`}</span>
-                            </button>
+                          )}
+                        </div>
+
+                        {guestOrders.length > 0 && (
+                          <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-4 sm:p-5">
+                            <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                              <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-600" /> Recent Activity
+                            </h3>
+                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                              {guestOrders.slice(0, 5).map(order => (
+                                <div key={order.id} className="flex items-center justify-between py-1.5 border-b border-surface-50 last:border-0 text-xs">
+                                  <div className="min-w-0">
+                                    <p className="font-semibold text-surface-800 truncate text-[11px]">{order.inventory_items?.name} x{order.quantity}</p>
+                                    <p className="text-[9px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  </div>
+                                  <span className={`px-1.5 py-0.5 text-[8px] font-bold uppercase rounded-full ml-2 whitespace-nowrap ${
+                                    order.status === 'served' ? 'bg-emerald-50 text-emerald-700' :
+                                    order.status === 'preparing' ? 'bg-blue-50 text-blue-700' :
+                                    order.status === 'cancelled' ? 'bg-rose-50 text-rose-700' :
+                                    'bg-amber-50 text-amber-700'
+                                  }`}>
+                                    {order.status}
+                                  </span>
+                                </div>
+                              ))}
+                              <button
+                                onClick={() => setDiningSubTab('history')}
+                                className="w-full text-center text-[10px] text-emerald-600 font-bold hover:underline py-1 mt-1 block"
+                              >
+                                View Detailed Order History →
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
-
-                      {guestOrders.length > 0 && (
-                        <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-5">
-                          <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                            <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-600" /> Recent Orders
-                          </h3>
-                          <div className="space-y-2 max-h-60 overflow-y-auto">
-                            {guestOrders.slice(0, 10).map(order => (
-                              <div key={order.id} className="flex items-center justify-between py-1.5 border-b border-surface-50 last:border-0 text-xs">
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-surface-800 truncate">{order.inventory_items?.name} x{order.quantity}</p>
-                                  <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {guestOrders.length === 0 ? (
+                        <div className="bg-white rounded-2xl border border-surface-200 p-12 text-center max-w-xl mx-auto">
+                          <ShoppingCart className="w-10 h-10 text-surface-300 mx-auto mb-3 animate-bounce" />
+                          <h3 className="text-sm font-semibold text-surface-700">No Stay Orders Yet</h3>
+                          <p className="text-xs text-surface-400 mt-1 max-w-xs mx-auto">Browse our room service menu and order fresh food and beverages anytime.</p>
+                          <button
+                            onClick={() => setDiningSubTab('menu')}
+                            className="mt-5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm hover:shadow-md transition-all animate-pulse"
+                          >
+                            Explore Menu
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 max-w-3xl">
+                          {guestOrders.map((order) => {
+                            const statusColor: Record<string, string> = { 
+                              pending: 'bg-amber-50 text-amber-700 border-amber-100', 
+                              preparing: 'bg-blue-50 text-blue-700 border-blue-100', 
+                              served: 'bg-emerald-50 text-emerald-700 border-emerald-100', 
+                              cancelled: 'bg-surface-100 text-surface-500 border-surface-100' 
+                            };
+                            const statusIcon = { pending: '⏳', preparing: '👨‍🍳', served: '✅', cancelled: '❌' } as Record<string, string>;
+                            return (
+                              <div key={order.id} className="bg-white rounded-2xl border border-surface-150 p-4 shadow-sm flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="text-2xl">{statusIcon[order.status] || '📦'}</div>
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-surface-900 text-sm">{(order as any).inventory_items?.name || 'Dining Item'}</p>
+                                    <p className="text-xs text-surface-500">x{order.quantity} · {settings.currencySymbol}{Number(order.total_price).toFixed(2)}</p>
+                                    <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleString()}</p>
+                                  </div>
                                 </div>
-                                <span className={`px-1.5 py-0.5 text-[9px] font-bold uppercase rounded-full ml-2 whitespace-nowrap ${
-                                  order.status === 'served' ? 'bg-emerald-50 text-emerald-700' :
-                                  order.status === 'preparing' ? 'bg-amber-50 text-amber-700' :
-                                  order.status === 'cancelled' ? 'bg-rose-50 text-rose-700' :
-                                  'bg-sky-50 text-sky-700'
-                                }`}>
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border ${statusColor[order.status] || 'bg-surface-100 text-surface-500'} flex-shrink-0`}>
                                   {order.status}
                                 </span>
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -1447,6 +1765,40 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                       )}
                     </div>
 
+                    {/* Stay Services Quick Bar */}
+                    <div className="bg-amber-50/40 border-b border-surface-100 px-3 sm:px-5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1 px-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-700 font-bold text-xs">🛎️</span>
+                        <div>
+                          <p className="font-bold text-surface-800">Support & Suite Assistant</p>
+                          <p className="text-[10px] text-surface-400">Dispatch a host or request express checkout instantly</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCallReason('');
+                            setShowCallStaffModal(true);
+                          }}
+                          className="px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
+                        >
+                          <Bell className="w-3 h-3 text-white" /> Call Staff
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCheckoutConfirmModal(true);
+                          }}
+                          disabled={checkoutRequesting}
+                          className="px-2.5 sm:px-3 py-1.5 bg-white hover:bg-surface-50 border border-surface-200 text-surface-700 rounded-xl font-bold cursor-pointer disabled:opacity-50 transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
+                        >
+                          {checkoutRequesting ? <Loader2 className="w-3 h-3 animate-spin text-surface-500" /> : <DoorOpen className="w-3 h-3 text-surface-500" />}
+                          Express Checkout
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-3 bg-surface-50/50" style={{ maxHeight: '50vh' }}>
                       {chatMessages.length === 0 ? (
                         <div className="text-center py-12">
@@ -1479,7 +1831,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                                 }`}>
                                   <p className="text-sm leading-relaxed">{msg.message}</p>
                                   <p className={`text-[9px] mt-1 ${isGuest ? 'text-brand-200' : 'text-surface-400'}`}>
-                                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </p>
                                 </div>
                               </div>
@@ -1515,30 +1867,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                         <input
                           type="text"
                           value={chatInput}
-                          onChange={(e) => {
-                            setChatInput(e.target.value);
-                            if (!checkedInBooking) return;
-                            if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-                            typingTimerRef.current = setTimeout(() => {
-                              supabase.from('chat_typing').upsert({
-                                booking_id: checkedInBooking.id,
-                                user_id: chatSenderId,
-                                user_name: effectiveProfile.full_name || 'Guest',
-                                user_role: 'guest',
-                                is_typing: false
-                              }, { onConflict: 'booking_id, user_id' }).then(() => {});
-                              typingTimerRef.current = null;
-                            }, 2000);
-                            if (e.target.value.trim()) {
-                              supabase.from('chat_typing').upsert({
-                                booking_id: checkedInBooking.id,
-                                user_id: chatSenderId,
-                                user_name: effectiveProfile.full_name || 'Guest',
-                                user_role: 'guest',
-                                is_typing: true
-                              }, { onConflict: 'booking_id, user_id' }).then(() => {});
-                            }
-                          }}
+                          onChange={(e) => setChatInput(e.target.value)}
                           placeholder="Type your message..."
                           className="flex-1 px-4 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors placeholder:text-surface-400"
                         />
@@ -1557,86 +1886,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                 );
               })()}
 
-              {/* ===== CALL STAFF TAB ===== */}
-              {activeTab === 'call_staff' && hasActiveStay && (
-                <div className="space-y-6 max-w-2xl mx-auto">
-                  <div>
-                    <h2 className="text-lg font-bold text-surface-900 tracking-tight">Request Staff Assistance</h2>
-                    <p className="text-xs text-surface-400 mt-0.5">Need something? A staff member will be dispatched to your suite.</p>
-                  </div>
-
-                  <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-4 sm:p-6">
-                    <div className="flex items-center gap-3 mb-4 sm:mb-5">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-amber-50 rounded-xl flex items-center justify-center border border-amber-100">
-                        <Bell className="w-5 h-5 sm:w-6 sm:h-6 text-amber-600" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-surface-900">Call for Assistance</h3>
-                        <p className="text-[10px] sm:text-[11px] text-surface-400">Suite {checkedInBooking?.rooms?.room_number} — Front desk notified</p>
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-1.5">
-                        {['Extra Towels', 'Housekeeping', 'Maintenance', 'Room Service', 'Concierge', 'Other'].map(reason => (
-                          <button
-                            key={reason}
-                            type="button"
-                            onClick={() => setCallReason(reason)}
-                            className={`px-3 py-1.5 text-[10px] font-semibold rounded-lg border transition-all cursor-pointer ${
-                              callReason === reason
-                                ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
-                                : 'bg-white text-surface-600 border-surface-200 hover:border-amber-300 hover:text-amber-700'
-                            }`}
-                          >
-                            {reason}
-                          </button>
-                        ))}
-                      </div>
-                      <input
-                        type="text"
-                        value={callReason}
-                        onChange={(e) => setCallReason(e.target.value)}
-                        placeholder="Or type specific request..."
-                        className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-3 text-xs focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
-                      />
-                      <button
-                        onClick={callStaff}
-                        disabled={callingStaff}
-                        className="w-full py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-surface-200 text-white rounded-xl font-semibold text-xs cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all shadow-sm hover:shadow-md hover:shadow-amber-600/20"
-                      >
-                        {callingStaff ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
-                        <span>{callingStaff ? 'Calling...' : 'Call Staff Now'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {staffCalls.length > 0 && (
-                    <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-5">
-                      <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                        <Bell className="w-3.5 h-3.5 text-amber-500" /> Request History
-                      </h3>
-                      <div className="space-y-2">
-                        {staffCalls.map(call => (
-                          <div key={call.id} className="flex items-center justify-between py-2 border-b border-surface-50 last:border-0">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-surface-800 truncate">{call.reason}</p>
-                              <p className="text-[10px] text-surface-400">{new Date(call.created_at).toLocaleString()}</p>
-                            </div>
-                            <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded-full ml-2 whitespace-nowrap ${
-                              call.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
-                              call.status === 'responded' ? 'bg-sky-50 text-sky-700' :
-                              call.status === 'cancelled' ? 'bg-rose-50 text-rose-700' :
-                              'bg-amber-50 text-amber-700'
-                            }`}>
-                              {call.status === 'responded' ? 'On the way' : call.status}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* ===== EXTEND STAY TAB ===== */}
               {activeTab === 'extend_stay' && hasActiveStay && (
@@ -1740,7 +1989,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                                 if (ampm === 'AM' && h === 12) h = 0;
                                 const outDate = new Date(checkedInBooking.check_out_date);
                                 outDate.setHours(h + extendHours, m);
-                                return outDate.toLocaleDateString() + ' at ' + outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+                                return outDate.toLocaleDateString() + ' at ' + outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                               })()}
                             </p>
                           )}
@@ -1864,47 +2113,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                 </div>
               )}
 
-              {/* MY ORDERS TAB */}
-              {activeTab === 'orders' && hasActiveStay && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-surface-900">My Orders</h2>
-                      <p className="text-xs text-surface-400 mt-0.5">Track the status of your food & beverage orders in real time.</p>
-                    </div>
-                    <button onClick={() => setActiveTab('menu')} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-all">
-                      <Plus className="w-3.5 h-3.5" /> New Order
-                    </button>
-                  </div>
-                  {guestOrders.length === 0 ? (
-                    <div className="bg-white rounded-2xl border border-surface-200 p-12 text-center">
-                      <ShoppingCart className="w-10 h-10 text-surface-300 mx-auto mb-3" />
-                      <h3 className="text-sm font-semibold text-surface-700">No orders yet</h3>
-                      <p className="text-xs text-surface-400 mt-1">Browse the menu to place your first order.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {guestOrders.map((order) => {
-                        const statusColor: Record<string, string> = { pending: 'bg-amber-50 text-amber-700 border-amber-100', preparing: 'bg-blue-50 text-blue-700 border-blue-100', served: 'bg-emerald-50 text-emerald-700 border-emerald-100', cancelled: 'bg-surface-100 text-surface-500 border-surface-100' };
-                        const statusIcon = { pending: '⏳', preparing: '👨‍🍳', served: '✅', cancelled: '❌' } as Record<string, string>;
-                        return (
-                          <div key={order.id} className="bg-white rounded-2xl border border-surface-200 shadow-sm p-4 flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="text-2xl">{statusIcon[order.status] || '📦'}</div>
-                              <div className="min-w-0">
-                                <p className="font-bold text-surface-900 text-sm">{(order as any).inventory_items?.name || 'Item'}</p>
-                                <p className="text-xs text-surface-500">x{order.quantity} · {settings.currencySymbol}{Number(order.total_price).toLocaleString()}</p>
-                                <p className="text-[10px] text-surface-400">{new Date(order.created_at).toLocaleString()}</p>
-                              </div>
-                            </div>
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border ${statusColor[order.status] || 'bg-surface-100 text-surface-500'} flex-shrink-0`}>{order.status}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* MY BILL TAB */}
               {activeTab === 'billing' && hasActiveStay && (
@@ -1951,10 +2159,11 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                       {settings.currencySymbol}{Math.max(0, (Number(checkedInBooking?.total_price || 0) + guestCharges.reduce((s: number, c: any) => s + Number(c.amount), 0) + guestOrders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + Number(o.total_price), 0)) - guestPayments.reduce((s: number, p: any) => s + Number(p.amount), 0)).toLocaleString()}
                     </span>
                   </div>
-                  <button onClick={handleRequestCheckout} disabled={checkoutRequesting} className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-sm font-bold cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
-                    {checkoutRequesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <DoorOpen className="w-4 h-4" />}
-                    Request Checkout
-                  </button>
+                  <div className="bg-surface-50 border border-surface-200 rounded-2xl p-4 text-center mt-2">
+                    <p className="text-xs text-surface-500">
+                      Ready to check out? Go to <button type="button" onClick={() => setActiveTab('chat')} className="font-bold text-brand-600 hover:underline cursor-pointer">Chat Desk</button> to request your express checkout or summon assistance instantly.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -2043,6 +2252,258 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
               <X className="w-3.5 h-3.5" />
             </button>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Security Code Verification Dialog for Room Service Place Order */}
+      <AnimatePresence>
+        {showSecurityModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSecurityModal(false)}
+              className="fixed inset-0 bg-surface-950/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl border border-surface-200 max-w-sm w-full p-6 shadow-xl relative z-10 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-600">
+                  <span className="text-lg">🔒</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-surface-900">Secure Order Authorization</h3>
+                  <p className="text-[10px] text-surface-400">Security Check before placing orders</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs leading-relaxed text-surface-600 bg-surface-50 p-3.5 rounded-xl border border-surface-100">
+                <p>
+                  To prevent unauthorized or reckless ordering by children or companions, please authenticate with either:
+                </p>
+                <div className="space-y-1.5 font-semibold text-surface-800">
+                  <p className="flex items-center gap-1.5">
+                    🚪 <span className="text-[11px]">Suite/Room Number: <strong className="text-emerald-700">{(checkedInBooking as any)?.rooms?.room_number || roomNumber || 'N/A'}</strong></span>
+                  </p>
+                  {checkedInBooking?.sharing_code && (
+                    <p className="flex items-center gap-1.5">
+                      🔑 <span className="text-[11px]">Companion Security Code: <strong className="text-brand-700">{checkedInBooking.sharing_code}</strong></span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-surface-500 uppercase tracking-wider">Enter Authorization Code</label>
+                <input
+                  type="text"
+                  placeholder="Enter Suite # or companion key..."
+                  value={securityCodeInput}
+                  onChange={(e) => {
+                    setSecurityCodeInput(e.target.value);
+                    setSecurityCodeError('');
+                  }}
+                  className="w-full px-3 py-2.5 bg-surface-50 border border-surface-200 rounded-xl text-xs font-mono font-bold tracking-wider outline-none focus:border-brand-500 transition-colors placeholder:font-sans placeholder:text-surface-400 placeholder:font-normal"
+                />
+                {securityCodeError && (
+                  <p className="text-[10px] text-rose-600 font-semibold mt-1">⚠️ {securityCodeError}</p>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSecurityModal(false)}
+                  className="flex-1 py-2 text-xs font-semibold hover:bg-surface-50 text-surface-605 border border-surface-200 rounded-xl cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setSecurityCodeError('');
+                    const actualRoom = ((checkedInBooking as any)?.rooms?.room_number || roomNumber || '').toString().trim().toUpperCase();
+                    const actualCode = (checkedInBooking?.sharing_code || '').toString().trim().toUpperCase();
+                    const inputVal = securityCodeInput.trim().toUpperCase();
+
+                    if (!inputVal) {
+                      setSecurityCodeError('Please enter a code to authorize.');
+                      return;
+                    }
+
+                    const isRoomMatch = actualRoom && inputVal === actualRoom;
+                    const isCodeMatch = actualCode && inputVal === actualCode;
+
+                    if (isRoomMatch || isCodeMatch) {
+                      setShowSecurityModal(false);
+                      await placeOrder();
+                    } else {
+                      setSecurityCodeError('Authentication failed. Check your Suite or companion key.');
+                    }
+                  }}
+                  className="flex-1 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl cursor-pointer transition-colors shadow-sm"
+                >
+                  Confirm & Order
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Express Checkout Confirmation Dialog */}
+      <AnimatePresence>
+        {showCheckoutConfirmModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowCheckoutConfirmModal(false)}
+              className="fixed inset-0 bg-surface-950/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl border border-surface-200 max-w-sm w-full p-6 shadow-xl relative z-10 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+                  <span className="text-lg">🚪</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-surface-900">Request Express Checkout</h3>
+                  <p className="text-[10px] text-surface-400">Formal Guest Departure Action</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs leading-relaxed text-surface-600 bg-surface-50 p-3.5 rounded-xl border border-surface-100">
+                <p>
+                  You are about to submit a checkout request for <strong className="text-surface-800">Suite {(checkedInBooking as any)?.rooms?.room_number || roomNumber || 'N/A'}</strong>.
+                </p>
+                <p>
+                  This notifies the front desk instantly to prepare your final invoice statement and dispatch the housekeeping team.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCheckoutConfirmModal(false)}
+                  className="flex-1 py-2 text-xs font-semibold hover:bg-surface-50 text-surface-605 border border-surface-200 rounded-xl cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowCheckoutConfirmModal(false);
+                    await handleRequestCheckout();
+                  }}
+                  className="flex-1 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl cursor-pointer transition-colors shadow-sm"
+                >
+                  Request Checkout
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Call Staff Assistance Modal */}
+      <AnimatePresence>
+        {showCallStaffModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowCallStaffModal(false)}
+              className="fixed inset-0 bg-surface-950/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl border border-surface-200 max-w-md w-full p-6 shadow-xl relative z-10 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+                  <span className="text-lg">🛎️</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-surface-900 font-sans">Request Staff Support</h3>
+                  <p className="text-[10px] text-surface-400">Dispatch a hotel host to Suite {(checkedInBooking as any)?.rooms?.room_number || roomNumber || 'N/A'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-surface-500 uppercase tracking-wider mb-2">Select Quick Request Type</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['Extra Towels', 'Housekeeping Request', 'Maintenance Call', 'In-Suite Amenity', 'Tech Support', 'Other'].map(r => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setCallReason(r)}
+                        className={`px-2.5 py-1.5 text-[10px] sm:text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
+                          callReason === r
+                            ? 'bg-amber-500 border-amber-500 text-white shadow-sm'
+                            : 'bg-surface-50 border-surface-200 text-surface-700 hover:bg-surface-100 hover:border-surface-300'
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-surface-500 uppercase tracking-wider">Custom Assistance request / Detail</label>
+                  <input
+                    type="text"
+                    value={callReason}
+                    onChange={(e) => setCallReason(e.target.value)}
+                    placeholder="E.g., Please bring 2 wine glasses..."
+                    className="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCallStaffModal(false)}
+                  className="flex-1 py-2 text-xs font-semibold hover:bg-surface-50 text-surface-605 border border-surface-200 rounded-xl cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const finalReason = callReason.trim() || 'General Desk Assistance';
+                    setShowCallStaffModal(false);
+                    // Set reason on component state and trigger staff call
+                    setCallReason(finalReason);
+                    // Give a tiny timeout so state registers before database insert
+                    setTimeout(async () => {
+                      await callStaff();
+                    }, 50);
+                  }}
+                  disabled={callingStaff}
+                  className="flex-1 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-xl cursor-pointer transition-colors shadow-sm disabled:bg-surface-200 disabled:cursor-not-allowed"
+                >
+                  {callingStaff ? 'Calling...' : 'Call Staff Now'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Building, LayoutGrid, List, BedDouble, User, Clock, AlertTriangle } from 'lucide-react';
+import { Search, Building, LayoutGrid, List, BedDouble, User, Clock } from 'lucide-react';
 import { Room } from '../../types';
 import { RoomCard } from './RoomCard';
 import { RoomGridSkeleton } from './Skeleton';
@@ -14,7 +14,6 @@ interface RoomGridProps {
   actionLoading: string | null;
   statCounts: Record<string, number>;
   activeGuests: Map<string, string>;
-  overstayedRoomIds: Set<string>;
   currencySymbol: string;
   onSearchChange: (q: string) => void;
   onFilterChange: (key: string | null) => void;
@@ -25,7 +24,7 @@ interface RoomGridProps {
 const FILTERS = ['available', 'booked', 'reserved', 'cleaning', 'maintenance'];
 
 export function RoomGrid({
-  rooms, loading, searchQuery, statusFilter, selectedRoomId, actionLoading, statCounts, activeGuests, overstayedRoomIds, currencySymbol,
+  rooms, loading, searchQuery, statusFilter, selectedRoomId, actionLoading, statCounts, activeGuests, currencySymbol,
   onSearchChange, onFilterChange, onSelectRoom, onQuickAction,
 }: RoomGridProps) {
   const [listView, setListView] = useState(false);
@@ -136,13 +135,7 @@ export function RoomGrid({
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-surface-500 hidden md:table-cell">
-                      {guest ? (
-                        <span className="flex items-center gap-1">
-                          <User className="w-3 h-3 text-blue-400" />
-                          <span className="truncate max-w-[120px]">{guest}</span>
-                          {overstayedRoomIds.has(room.id) && <span title="Overstayed"><AlertTriangle className="w-3 h-3 text-rose-500 flex-shrink-0" /></span>}
-                        </span>
-                      ) : <span className="text-surface-300">—</span>}
+                      {guest ? <span className="flex items-center gap-1"><User className="w-3 h-3 text-blue-400" />{guest}</span> : <span className="text-surface-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-surface-700 font-semibold text-right hidden sm:table-cell">{currencySymbol}{Number(room.price_per_hour).toLocaleString()}<span className="text-surface-300 font-normal">/hr</span></td>
                     <td className="px-3 py-2.5 text-right">
@@ -166,7 +159,6 @@ export function RoomGrid({
               isSelected={selectedRoomId === room.id}
               isLoading={actionLoading === room.id}
               guestName={activeGuests.get(room.id)}
-              isOverstayed={overstayedRoomIds.has(room.id)}
               currencySymbol={currencySymbol}
               onSelect={() => onSelectRoom(room)}
               onQuickAction={(action) => onQuickAction(room, action)}

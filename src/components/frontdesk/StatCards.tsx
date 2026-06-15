@@ -15,38 +15,28 @@ export function StatCards({ counts, expectedToday, dailyRevenue, activeFilter, c
     { key: 'booked', label: 'Occupied', value: counts.booked },
     { key: 'cleaning', label: 'Cleaning', value: counts.cleaning },
     { key: 'maintenance', label: 'Maintenance', value: counts.maintenance },
-    { key: 'arrivals', label: 'Arrivals', value: expectedToday },
-    { key: 'revenue', label: 'Revenue', value: `${currencySymbol}${dailyRevenue.toLocaleString()}`, isString: true },
+    { key: 'arrivals', label: 'Today In', value: expectedToday },
+    { key: 'revenue', label: 'Revenue Ø', value: `${currencySymbol}${dailyRevenue.toLocaleString()}`, isString: true },
   ];
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
       {items.map((item) => {
         const cfg = item.key !== 'arrivals' && item.key !== 'revenue' ? STATUS_CONFIG[item.key] : null;
         const isActive = activeFilter === item.key;
-        const bgColor = cfg?.bg || (item.key === 'arrivals' ? 'bg-emerald-50/70 border-emerald-200/70' : 'bg-brand-50/70 border-brand-200/70');
+        const bgColor = cfg?.bg || (item.key === 'arrivals' ? 'bg-emerald-50 border-emerald-200' : 'bg-brand-50 border-brand-200');
+        const countColor = cfg?.color || (item.key === 'arrivals' ? 'text-emerald-700' : 'text-brand-700');
 
         const inner = (
-          <div className="flex items-baseline gap-1.5">
-            <p className={`text-lg font-bold leading-none tabular-nums ${isActive ? 'text-white' : cfg?.color || (item.key === 'arrivals' ? 'text-emerald-700' : 'text-brand-700')}`}>
-              {item.isString ? item.value : item.value}
-            </p>
-            {!item.isString && (
-              <span className={`text-[9px] font-medium uppercase tracking-wide ${isActive ? 'text-white/70' : 'text-surface-400'}`}>
-                {item.label}
-              </span>
-            )}
-            {item.isString && (
-              <span className={`text-[9px] font-medium uppercase tracking-wide ${isActive ? 'text-white/70' : 'text-surface-400'}`}>
-                {item.label}
-              </span>
-            )}
-          </div>
+          <>
+            <p className={`text-xl font-bold leading-none ${countColor}`}>{item.isString ? item.value : item.value}</p>
+            <p className="text-[9px] font-semibold text-surface-400 uppercase tracking-wider mt-1.5">{item.label}</p>
+          </>
         );
 
         if (item.key === 'arrivals' || item.key === 'revenue') {
           return (
-            <div key={item.key} className={`${bgColor} rounded-xl px-3 py-2.5 border transition-all duration-200`}>
+            <div key={item.key} className={`${bgColor} rounded-xl p-3 text-center border transition-all`}>
               {inner}
             </div>
           );
@@ -56,10 +46,10 @@ export function StatCards({ counts, expectedToday, dailyRevenue, activeFilter, c
           <button
             key={item.key}
             onClick={() => onFilterChange(isActive ? null : item.key)}
-            className={`rounded-xl px-3 py-2.5 border transition-all duration-200 cursor-pointer active:scale-[0.98] ${
+            className={`rounded-xl p-3 text-center border transition-all cursor-pointer active:scale-[0.97] ${
               isActive
-                ? 'bg-surface-900 border-surface-900 shadow-[0_1px_3px_rgba(0,0,0,0.1)]'
-                : `${bgColor} hover:bg-white hover:border-surface-300 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04)]`
+                ? 'ring-2 ring-brand-500/20 border-brand-300 bg-brand-50 shadow-xs'
+                : `${bgColor} hover:shadow-sm hover:-translate-y-0.5`
             }`}
           >
             {inner}

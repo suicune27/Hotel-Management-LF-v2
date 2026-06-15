@@ -89,7 +89,7 @@ export function ConfirmDialog({ isOpen, title, message, onConfirm, onCancel, isD
               </button>
               <button
                 type="button"
-                onClick={async () => { try { await onConfirm(); } catch (e) { /* confirm error suppressed */ } }}
+                onClick={async () => { try { await onConfirm(); } catch (e) { console.error("Confirm error:", e); } }}
                 className={`flex-1 py-2.5 text-white rounded-xl font-semibold transition-colors cursor-pointer text-center text-xs shadow-md ${
                   isDangerous
                     ? 'bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 border border-rose-600/50 shadow-rose-500/20'

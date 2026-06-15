@@ -24,22 +24,56 @@ export class CallService {
   private currentCallId: string | null = null;
   private pendingCandidates: RTCIceCandidateInit[] = [];
   private remoteDescSet = false;
+  private logTag = '';
+
+  private log(...args: any[]) {
+    console.log(`[CallService${this.logTag}]`, ...args);
+  }
 
   async requestMicrophone(): Promise<boolean> {
     try {
+      this.log('Requesting microphone...');
       this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const tracks = this.localStream.getAudioTracks();
+      this.log('Microphone granted, tracks:', tracks.length, 'enabled:', tracks.map(t => `${t.label}:${t.enabled}`));
       return true;
-    } catch { return false; }
+    } catch (err) {
+      this.log('Microphone DENIED:', err);
+      return false;
+    }
   }
 
+  setLogTag(tag: string) { this.logTag = `[${tag}]`; }
+
   private createPC() {
+    this.log('Creating RTCPeerConnection...');
     this.pc = new RTCPeerConnection(STUN_SERVERS);
-    if (this.localStream)
-      this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
-    this.pc.ontrack = (e) => { this.remoteStream = e.streams[0]; };
+    if (this.localStream) {
+      const tracks = this.localStream.getTracks();
+      this.log('Adding', tracks.length, 'local tracks to PC');
+      tracks.forEach((t) => this.pc!.addTrack(t, this.localStream!));
+    } else {
+      this.log('WARN: No local stream to add to PC');
+    }
+    this.pc.ontrack = (e) => {
+      this.log('ontrack FIRED! streams:', e.streams.length, 'track kind:', e.track?.kind);
+      this.remoteStream = e.streams[0];
+      this.log('remoteStream set:', !!this.remoteStream);
+    };
     this.pc.onicecandidate = (e) => {
-      if (e.candidate && this.currentCallId)
+      if (e.candidate && this.currentCallId) {
+        this.log('Sending ICE candidate:', e.candidate.type, e.candidate.candidate.slice(0, 60));
         this.signalChannel?.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
+      }
+    };
+    this.pc.oniceconnectionstatechange = () => {
+      this.log('ICE connection state:', this.pc?.iceConnectionState);
+    };
+    this.pc.onconnectionstatechange = () => {
+      this.log('Connection state:', this.pc?.connectionState);
+    };
+    this.pc.onsignalingstatechange = () => {
+      this.log('Signaling state:', this.pc?.signalingState);
     };
   }
 
@@ -60,42 +94,57 @@ export class CallService {
   }
 
   async createOffer() {
+    this.log('createOffer()');
     this.createPC();
-    if (!this.pc) return null;
+    if (!this.pc) { this.log('createOffer FAILED: no PC'); return null; }
     const offer = await this.pc.createOffer();
+    this.log('Offer created, type:', offer.type, 'SDP length:', offer.sdp?.length);
     await this.pc.setLocalDescription(offer);
+    this.log('Local description set');
     return offer;
   }
 
   async handleOffer(offer: any) {
+    this.log('handleOffer()');
     this.createPC();
-    if (!this.pc) return null;
+    if (!this.pc) { this.log('handleOffer FAILED: no PC'); return null; }
+    this.log('Setting remote description from offer...');
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
     this.remoteDescSet = true;
+    this.log('Remote description set, flushing', this.pendingCandidates.length, 'pending candidates');
     this.flushPendingCandidates();
     const answer = await this.pc.createAnswer();
+    this.log('Answer created, type:', answer.type, 'SDP length:', answer.sdp?.length);
     await this.pc.setLocalDescription(answer);
+    this.log('Local description set (answer)');
     return answer;
   }
 
   async handleAnswer(answer: any) {
-    if (!this.pc) return;
+    if (!this.pc) { this.log('handleAnswer FAILED: no PC'); return; }
     try {
+      this.log('handleAnswer() - setting remote description');
       await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
       this.remoteDescSet = true;
+      this.log('Remote description set, flushing', this.pendingCandidates.length, 'pending candidates');
       this.flushPendingCandidates();
-    } catch {}
+    } catch (err) {
+      this.log('handleAnswer FAILED:', err);
+    }
   }
 
   queueIceCandidate(candidate: any) {
     if (this.remoteDescSet && this.pc) {
-      try { this.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+      this.log('Adding remote ICE candidate immediately');
+      try { this.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) { this.log('addIceCandidate FAILED:', err); }
     } else {
+      this.log('Queueing ICE candidate (remote desc not set yet)');
       this.pendingCandidates.push(candidate);
     }
   }
 
   endCall() {
+    this.log('endCall()');
     this.pc?.close();
     this.pc = null;
     this.localStream?.getTracks().forEach((t) => t.stop());
@@ -109,14 +158,19 @@ export class CallService {
   }
 
   toggleMute(): boolean {
-    if (!this.localStream) return false;
+    if (!this.localStream) { this.log('toggleMute: no local stream'); return false; }
     const enabled = !this.localStream.getAudioTracks()[0]?.enabled;
+    this.log('toggleMute:', enabled ? 'UNMUTED' : 'MUTED');
     this.localStream.getAudioTracks().forEach((t) => (t.enabled = enabled));
     return enabled;
   }
 
   broadcastSignal(type: string, data?: any) {
-    if (!this.signalChannel || !this.currentCallId) return;
+    if (!this.signalChannel || !this.currentCallId) {
+      this.log('broadcastSignal FAILED: no channel or callId');
+      return;
+    }
+    this.log('Broadcasting signal:', type);
     this.signalChannel.send({
       type: 'broadcast',
       event: 'signal',

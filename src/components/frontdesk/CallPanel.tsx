@@ -25,11 +25,13 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Init announce channel early
-  useEffect(() => { CallService.initAnnounce(); }, []);
+  useEffect(() => { console.log('[CallPanel] Mounting'); CallService.initAnnounce(); }, []);
 
   useEffect(() => {
+    console.log('[CallPanel] Init effect with profile:', userProfileId);
     loadHistory();
     CallService.listenForNewCalls(async (callId) => {
+      console.log('[CallPanel] New call announced:', callId);
       const call = await CallService.getCall(callId);
       if (!call) return;
       if (call.receiver_id && call.receiver_id !== userProfileId) return;
@@ -44,6 +46,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
 
   useEffect(() => {
     if (activeCall?.status === 'connected' && activeCall?.start_time) {
+      console.log('[CallPanel] Starting duration timer');
       const start = new Date(activeCall.start_time).getTime();
       durationRef.current = setInterval(() => setCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
     }
@@ -51,11 +54,15 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   }, [activeCall?.status, activeCall?.start_time]);
 
   useEffect(() => {
-    if (callSvc.current.remoteStream && audioRef.current) {
-      audioRef.current.srcObject = callSvc.current.remoteStream;
-      audioRef.current.play().catch(() => {});
+    const stream = callSvc.current.remoteStream;
+    const el = audioRef.current;
+    console.log('[CallPanel] Remote stream effect: stream=', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el=', !!el);
+    if (stream && el) {
+      console.log('[CallPanel] Connecting remote stream to audio element!');
+      el.srcObject = stream;
+      el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
     }
-  }, [callSvc.current.remoteStream]);
+  });
 
   const loadHistory = async () => {
     const h = await CallService.getCallHistory();

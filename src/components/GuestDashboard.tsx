@@ -609,15 +609,26 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   useEffect(() => {
     if (guestCallStatus !== 'connected') return;
     const el = guestAudioRef.current;
+    console.log('[GuestAudio] Starting poll for remoteStream, el:', !!el, 'ref:', !!guestCallServiceRef.current);
+    let attempts = 0;
     const check = setInterval(() => {
-      const stream = guestCallServiceRef.current?.remoteStream;
+      attempts++;
+      const svc = guestCallServiceRef.current;
+      const stream = svc?.remoteStream;
+      console.log('[GuestAudio] Poll attempt', attempts, 'stream:', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el:', !!el);
       if (stream && el) {
+        console.log('[GuestAudio] CONNECTING remote stream to audio element!');
+        console.log('[GuestAudio] Audio tracks in stream:', stream.getAudioTracks().map(t => `${t.label}:${t.enabled}:${t.readyState}`));
         el.srcObject = stream;
-        el.play().catch(() => {});
+        el.play().then(() => console.log('[GuestAudio] Audio play() SUCCESS')).catch((err) => console.log('[GuestAudio] Audio play() FAILED:', err));
         clearInterval(check);
       }
+      if (attempts > 50) { clearInterval(check); console.log('[GuestAudio] Giving up after 50 attempts (10s)'); }
     }, 200);
-    return () => clearInterval(check);
+    return () => {
+      console.log('[GuestAudio] Poll cleanup');
+      clearInterval(check);
+    };
   }, [guestCallStatus]);
 
   // Auto-disconnect call when guest refreshes/closes the page
@@ -852,13 +863,17 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   };
 
   const callFrontDesk = async () => {
-    if (!checkedInBooking || !effectiveProfile) return;
+    console.log('[GuestCall] callFrontDesk started');
+    if (!checkedInBooking || !effectiveProfile) { console.log('[GuestCall] no booking or profile'); return; }
     setGuestCallStatus('calling');
     try {
       const svc = new CallService();
+      svc.setLogTag('Guest');
       guestCallServiceRef.current = svc;
+      console.log('[GuestCall] Requesting microphone...');
       const ok = await svc.requestMicrophone();
-      if (!ok) { setAlertState({ title: 'Microphone Required', message: 'Please allow microphone access to call the front desk.' }); setGuestCallStatus('idle'); return; }
+      if (!ok) { console.log('[GuestCall] Mic denied'); setAlertState({ title: 'Microphone Required', message: 'Please allow microphone access to call the front desk.' }); setGuestCallStatus('idle'); return; }
+      console.log('[GuestCall] Creating call in DB...');
       const call = await CallService.createCall({
         booking_id: checkedInBooking.id,
         caller_id: (() => { const s = effectiveProfile.id || ''; return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ? s : null; })(),
@@ -867,31 +882,55 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         room_number: checkedInBooking.rooms?.room_number || undefined,
         status: 'ringing',
       });
-      if (!call) { setAlertState({ title: 'Call Failed', message: 'Could not connect to the front desk. Make sure the "calls" table has been created in your Supabase database.' }); setGuestCallStatus('idle'); return; }
+      if (!call) { console.log('[GuestCall] Failed to create call in DB'); setAlertState({ title: 'Call Failed', message: 'Could not connect to the front desk. Make sure the "calls" table has been created in your Supabase database.' }); setGuestCallStatus('idle'); return; }
+      console.log('[GuestCall] Call created:', call.id, 'status:', call.status);
       let callTimer: ReturnType<typeof setInterval> | null = null;
+      console.log('[GuestCall] Subscribing to signaling...');
       svc.subscribeToSignaling(call.id, effectiveProfile.id || '', async (signal) => {
+        console.log('[GuestCall] Signal received:', signal.type);
         if (signal.type === 'answer') {
+          console.log('[GuestCall] Got answer signal, fetching answer_data from DB...');
           const fromDb = await CallService.getCall(call.id);
-          if (fromDb?.answer_data) await svc.handleAnswer(JSON.parse(fromDb.answer_data));
+          if (fromDb?.answer_data) {
+            console.log('[GuestCall] Answer data found, calling handleAnswer');
+            await svc.handleAnswer(JSON.parse(fromDb.answer_data));
+          } else {
+            console.log('[GuestCall] No answer_data in DB yet');
+          }
         }
         if (signal.type === 'declined' || signal.type === 'ended') {
+          console.log('[GuestCall] Call ended/declined via signal');
           setGuestCallStatus('ended');
           svc.endCall();
         }
-        if (signal.type === 'ice-candidate') svc.queueIceCandidate(signal.data);
+        if (signal.type === 'ice-candidate') {
+          console.log('[GuestCall] Queueing ICE candidate from signal');
+          svc.queueIceCandidate(signal.data);
+        }
       });
+      console.log('[GuestCall] Creating offer...');
       const offer = await svc.createOffer();
       if (offer) {
+        console.log('[GuestCall] Offer created, storing in DB...');
         const stored = await CallService.updateCall(call.id, { offer_data: JSON.stringify(offer) });
-        if (stored) CallService.announceNewCall(call.id);
-        else console.error('Failed to store offer_data for call:', call.id);
+        if (stored) {
+          console.log('[GuestCall] Offer stored, announcing call');
+          CallService.announceNewCall(call.id);
+        }
+        else console.log('[GuestCall] Failed to store offer_data for call:', call.id);
+      } else {
+        console.log('[GuestCall] Failed to create offer!');
       }
       // Poll for answer
+      console.log('[GuestCall] Starting poll for answer...');
       const pollTimer = setInterval(async () => {
         const updated = await CallService.getCall(call.id);
-        if (!updated) return;
+        if (!updated) { console.log('[GuestCall] Poll: no DB record'); return; }
+        console.log('[GuestCall] Poll: status=', updated.status, 'hasAnswer=', !!updated.answer_data);
         if (updated.status === 'connected' && updated.answer_data) {
+          console.log('[GuestCall] Poll: connected with answer! Calling handleAnswer...');
           await svc.handleAnswer(JSON.parse(updated.answer_data));
+          console.log('[GuestCall] Setting status to connected');
           setGuestCallStatus('connected');
           const start = Date.now();
           callTimer = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
@@ -925,9 +964,11 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   };
 
   const hangUpCall = async () => {
+    console.log('[GuestCall] hangUpCall');
     if (guestCallServiceRef.current) {
       const svc = guestCallServiceRef.current;
       const callId = svc['currentCallIdVal'] || '';
+      console.log('[GuestCall] Ending call:', callId, 'duration:', guestCallDuration);
       await CallService.updateCall(callId, { status: 'ended', end_time: new Date().toISOString() });
       svc.broadcastSignal('ended');
       if (callId && guestCallDuration > 0 && checkedInBooking) {

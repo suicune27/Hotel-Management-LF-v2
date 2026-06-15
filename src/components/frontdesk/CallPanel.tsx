@@ -1,8 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Mic, MicOff, Volume2, VolumeX, Pause, Play, X, Loader2, Clock, User, AlertTriangle } from 'lucide-react';
+import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Mic, MicOff, Volume2, VolumeX, Pause, Play, X, Loader2, Clock, User, AlertTriangle, Volume } from 'lucide-react';
 import { CallService } from '../../lib/callService';
 import { supabase } from '../../lib/supabase';
 import type { Call } from '../../types';
+
+interface MediaDeviceInfo {
+  deviceId: string;
+  label: string;
+  kind: MediaDeviceKind;
+}
 
 interface CallPanelProps {
   userProfileId: string;
@@ -20,9 +26,36 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const [isOnHold, setIsOnHold] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+  const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedOutputDevice, setSelectedOutputDevice] = useState<string>('default');
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callSvc = useRef(new CallService());
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [showOutputPicker, setShowOutputPicker] = useState(false);
+
+  // Enumerate audio output devices
+  useEffect(() => {
+    const enumerate = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const outputs = devices
+          .filter(d => d.kind === 'audiooutput')
+          .map(d => ({ deviceId: d.deviceId, label: d.label || d.deviceId.slice(0, 8) + '...', kind: d.kind }));
+        setAudioOutputDevices(outputs);
+      } catch {}
+    };
+    enumerate();
+    navigator.mediaDevices?.addEventListener('devicechange', enumerate);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', enumerate);
+  }, []);
+
+  // Switch output device when selected
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el && typeof (el as any).setSinkId === 'function') {
+      (el as any).setSinkId(selectedOutputDevice).catch(() => {});
+    }
+  }, [selectedOutputDevice]);
 
   // Init announce channel early
   useEffect(() => { console.log('[CallPanel] Mounting'); CallService.initAnnounce(); }, []);
@@ -234,11 +267,34 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
                   <p className="text-lg font-mono font-bold text-emerald-700">{fmtDur(callDuration)}</p>
                 </div>
               </div>
-              <div className="flex justify-center gap-3">
+              <div className="flex justify-center gap-3 mb-2">
                 <button onClick={handleToggleMute} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${isMuted ? 'bg-rose-100 text-rose-600' : 'bg-white text-surface-600 hover:bg-surface-50'}`}>{isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
                 <button onClick={() => setIsSpeaker(!isSpeaker)} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${isSpeaker ? 'bg-brand-100 text-brand-600' : 'bg-white text-surface-600 hover:bg-surface-50'}`}>{isSpeaker ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}</button>
                 <button onClick={handleHold} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${isOnHold ? 'bg-amber-100 text-amber-600' : 'bg-white text-surface-600 hover:bg-surface-50'}`}>{isOnHold ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
                 <button onClick={handleEndCall} className="w-10 h-10 rounded-full bg-rose-600 text-white flex items-center justify-center hover:bg-rose-700 transition-colors cursor-pointer"><PhoneOff className="w-4 h-4" /></button>
+              </div>
+              {/* Audio output device selector */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowOutputPicker(!showOutputPicker)}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[9px] font-semibold text-surface-500 hover:text-surface-700 hover:bg-surface-50 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Volume className="w-3 h-3" />
+                  Audio Output: {audioOutputDevices.find(d => d.deviceId === selectedOutputDevice)?.label?.replace(/^(Default|Communications)\s*/i, '')?.trim() || 'Default'}
+                </button>
+                {showOutputPicker && audioOutputDevices.length > 0 && (
+                  <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-surface-200 rounded-xl shadow-xl z-10 max-h-48 overflow-y-auto">
+                    {audioOutputDevices.map(device => (
+                      <button
+                        key={device.deviceId}
+                        onClick={() => { setSelectedOutputDevice(device.deviceId); setShowOutputPicker(false); }}
+                        className={`w-full text-left px-3 py-2 text-[10px] font-semibold hover:bg-surface-50 transition-colors cursor-pointer ${selectedOutputDevice === device.deviceId ? 'text-brand-700 bg-brand-50' : 'text-surface-700'}`}
+                      >
+                        {device.label || 'Unknown device'}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

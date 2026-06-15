@@ -86,6 +86,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestIsMuted, setGuestIsMuted] = useState(false);
   const guestCallServiceRef = useRef<CallService | null>(null);
   const guestAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [guestAudioOutputDevices, setGuestAudioOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
+  const [guestSelectedOutputDevice, setGuestSelectedOutputDevice] = useState('default');
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
   // Stay extensions
@@ -659,6 +661,32 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       }
     };
   }, [guestCallStatus]);
+
+  // Enumerate audio output devices
+  useEffect(() => {
+    const enumerate = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setGuestAudioOutputDevices(
+          devices.filter(d => d.kind === 'audiooutput').map(d => ({
+            deviceId: d.deviceId,
+            label: d.label || d.deviceId.slice(0, 8) + '...',
+          }))
+        );
+      } catch {}
+    };
+    enumerate();
+    navigator.mediaDevices?.addEventListener('devicechange', enumerate);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', enumerate);
+  }, []);
+
+  // Switch audio output device when selected
+  useEffect(() => {
+    const el = guestAudioRef.current;
+    if (el && typeof (el as any).setSinkId === 'function') {
+      (el as any).setSinkId(guestSelectedOutputDevice).catch(() => {});
+    }
+  }, [guestSelectedOutputDevice]);
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2859,6 +2887,18 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                 {guestCallStatus === 'ended' ? <X className="w-4 h-4" /> : <PhoneOff className="w-4 h-4" />}
               </button>
             </div>
+            {/* Audio output selector */}
+            {guestCallStatus === 'connected' && guestAudioOutputDevices.length > 0 && (
+              <select
+                value={guestSelectedOutputDevice}
+                onChange={(e) => setGuestSelectedOutputDevice(e.target.value)}
+                className="w-full text-[9px] font-semibold text-surface-600 bg-white border border-surface-200 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-brand-400 cursor-pointer"
+              >
+                {guestAudioOutputDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || 'Unknown device'}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
       )}

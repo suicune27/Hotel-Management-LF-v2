@@ -10,7 +10,7 @@ import {
   History, Timer, Sparkles, ClipboardList,
   UserPlus, CalendarPlus, Shield, Wrench, Pencil, User,
   CalendarClock, Receipt, CreditCard, FileText, ArrowRightLeft,
-  DoorOpen, CheckCircle, XCircle, Users, Clipboard, Star, Printer
+  DoorOpen, CheckCircle, XCircle, Users, Clipboard, Star, Printer, Trash2, Lock, Archive
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { detectHoliday, calculateAttendanceStatus, isDateInPreset } from './EmployeeDashboard';
@@ -28,9 +28,11 @@ import {
   STATUS_CONFIG, ORDER_STATUS_FLOW, diffHours, todayStr, tomorrowStr, nowTime,
   toIso, to24h, timeToMin, minToTime12, snapToNearest, dt, DeskTab, InvoiceData,
 } from './frontdesk/constants';
+import { EXTEND_PRESETS, addHoursToDate } from '../lib/booking-utils';
 import NotificationBell, { type AppNotification } from './NotificationBell';
 import { ToastContainer, ToastMessage } from './Toast';
 import BrandBar from './BrandBar';
+import { CallPanel } from './frontdesk/CallPanel';
 import { getSettings, saveSettings } from '../lib/settings';
 import type { AppSettings } from '../lib/settings';
 
@@ -60,7 +62,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
   const [roomModalPayments, setRoomModalPayments] = useState<any[]>([]);
   const [roomModalOrders, setRoomModalOrders] = useState<any[]>([]);
   const [roomModalTasks, setRoomModalTasks] = useState<any[]>([]);
-  const [roomModalRefreshKey, setRoomModalRefreshKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -353,7 +354,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     return () => {
       active = false;
     };
-  }, [selectedRoom?.id, roomModalRefreshKey]);
+  }, [selectedRoom?.id]);
 
   const modalBooking = useMemo(() => {
     if (!selectedRoom) return null;
@@ -1427,11 +1428,6 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     setSelectedRoom((prev) => prev?.id === room.id ? null : room);
   };
 
-  // Force room modal data refresh when a room is newly selected (including re-selecting same room after dialog closes)
-  useEffect(() => {
-    if (selectedRoom) setRoomModalRefreshKey((k) => k + 1);
-  }, [selectedRoom?.id]);
-
   const handleQuickAction = (room: Room, action: string) => {
     if (action === 'check-in' && room.status === 'available') {
       setCheckInDialog({ room });
@@ -1631,7 +1627,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
         />
 
         <div className="flex-1 overflow-y-auto">
-          <div className="px-4 lg:px-6 py-4">
+          <div className="px-3 lg:px-4 py-3">
             {/* Dashboard Stats */}
             <StatCards
               counts={statCounts}
@@ -1764,7 +1760,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
             <AnimatePresence mode="wait">
               {selectedRoom && (
                 <RoomModal
-                  key={selectedRoom.id + '-' + roomModalRefreshKey}
+                  key={selectedRoom.id}
                   room={selectedRoom}
                   currencySymbol={settings.currencySymbol}
                   modalBooking={modalBooking}
@@ -1811,6 +1807,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
             {/* ===== CHAT TAB ===== */}
             {activeTab === 'chat' && <ChatContent
               chatMessages={chatMessages}
+              setChatMessages={setChatMessages}
               chatConversations={chatConversations}
               selectedChatBooking={selectedChatBooking}
               setSelectedChatBooking={setSelectedChatBooking}
@@ -1820,6 +1817,9 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
               setChatSearch={setChatSearch}
               sendChatMessage={sendChatMessage}
               chatEndRef={chatEndRef}
+              userProfile={userProfile}
+              showError={showError}
+              showSuccess={showSuccess}
             />}
 
             {/* ===== REQUESTS TAB ===== */}
@@ -3045,7 +3045,24 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold text-surface-600">Add time to extend</p>
+              <p className="text-xs font-semibold text-surface-600">Quick extend</p>
+              <div className="flex flex-wrap gap-1.5">
+                {EXTEND_PRESETS.map((p) => (
+                  <button
+                    key={p.hours}
+                    type="button"
+                    onClick={() => {
+                      setExtendDays(0);
+                      setExtendHours(p.hours);
+                      setExtendMinutes(0);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-0 text-surface-600 border border-surface-200 hover:border-blue-300 hover:text-blue-700 transition-all cursor-pointer"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs font-semibold text-surface-600">Or enter custom</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold text-surface-500 mb-1">Days</label>
@@ -3219,6 +3236,13 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
 
       {/* Toasts */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      {userProfile && (
+        <CallPanel
+          userProfileId={userProfile.id}
+          userProfileName={userProfile.full_name || userProfile.email || 'Staff'}
+          userRole={userProfile.role || 'front_desk'}
+        />
+      )}
     </div>
   );
 }
@@ -3337,16 +3361,72 @@ function HistoryOrdersView({ orders, setOrderDetailModal }: {
 }
 
 function ChatContent({
-  chatMessages, chatConversations, selectedChatBooking, setSelectedChatBooking,
+  chatMessages, setChatMessages, chatConversations, selectedChatBooking, setSelectedChatBooking,
   chatInput, setChatInput, chatSearch, setChatSearch, sendChatMessage, chatEndRef,
+  userProfile, showError, showSuccess,
 }: {
-  chatMessages: ChatMessage[]; chatConversations: any[]; selectedChatBooking: string | null;
+  chatMessages: ChatMessage[]; setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  chatConversations: any[]; selectedChatBooking: string | null;
   setSelectedChatBooking: (id: string | null) => void; chatInput: string; setChatInput: (v: string) => void;
   chatSearch: string; setChatSearch: (v: string) => void; sendChatMessage: (e: React.FormEvent) => Promise<void>;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
+  userProfile?: Profile | null;
+  showError: (title: string, msg: string) => void;
+  showSuccess: (msg: string) => void;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState<{ bookingId: string; guestName: string; roomNumber: string } | null>(null);
+
+  const archiveConversation = async (bookingId: string, guestName: string, roomNumber: string) => {
+    if (!userProfile?.id) return;
+    setArchiving(bookingId);
+    setConfirmArchive(null);
+    try {
+      const msgs = chatMessages.filter((m) => m.booking_id === bookingId);
+      if (msgs.length === 0) { showError('Archive Failed', 'No messages found for this conversation.'); return; }
+      const { error: insertErr } = await supabase.from('chat_bin').insert({
+        booking_id: bookingId,
+        guest_name: guestName,
+        room_number: roomNumber,
+        messages: JSON.parse(JSON.stringify(msgs)),
+        deleted_by: userProfile.id,
+      });
+      if (insertErr) { showError('Archive Failed', `chat_bin insert error: ${insertErr.message}`); return; }
+      const { error: delErr } = await supabase.from('chat_messages').delete().eq('booking_id', bookingId);
+      if (delErr) { showError('Archive Failed', `chat_messages delete error: ${delErr.message}`); return; }
+      setChatMessages((prev) => prev.filter((m) => m.booking_id !== bookingId));
+      showSuccess(`Conversation with ${guestName} archived (${msgs.length} messages)`);
+    } catch (err: any) {
+      showError('Archive Failed', err?.message || 'Unexpected error');
+    } finally {
+      setArchiving(null);
+      if (selectedChatBooking === bookingId) setSelectedChatBooking(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || !deletePassword.trim() || !userProfile?.email) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: userProfile.email,
+        password: deletePassword,
+      });
+      if (error) { setDeleteError('Incorrect password'); setDeleting(false); return; }
+      const { error: delError } = await supabase.from('chat_messages').delete().eq('id', deleteTarget);
+      if (delError) throw delError;
+      setDeleteTarget(null);
+      setDeletePassword('');
+    } catch { setDeleteError('Failed to delete message'); } finally { setDeleting(false); }
+  };
   return (
+    <>
     <div className="mt-4 bg-white rounded-2xl border border-surface-100 shadow-sm overflow-hidden flex flex-col lg:flex-row" style={{ minHeight: '520px' }}>
       <div className={`${sidebarCollapsed ? 'lg:w-12' : 'lg:w-80'} border-b lg:border-b-0 lg:border-r border-surface-100 bg-surface-50/50 transition-all duration-200`}>
         <div className="p-3 border-b border-surface-100 bg-white flex items-center justify-between gap-2">
@@ -3367,15 +3447,30 @@ function ChatContent({
               {chatConversations.filter((c) => !chatSearch.trim() || c.guestName.toLowerCase().includes(chatSearch.toLowerCase()) || c.roomNumber.includes(chatSearch)).length === 0 ? (
                 <div className="text-center py-12 px-4"><MessageSquareText className="w-8 h-8 text-surface-300 mx-auto mb-2" /><p className="text-xs text-surface-400">{chatSearch.trim() ? 'No results.' : 'No conversations yet.'}</p></div>
               ) : (
-                chatConversations.filter((c) => !chatSearch.trim() || c.guestName.toLowerCase().includes(chatSearch.toLowerCase()) || c.roomNumber.includes(chatSearch)).map((conv) => (
-                  <button key={conv.bookingId} onClick={() => setSelectedChatBooking(conv.bookingId)}
-                    className={`w-full text-left px-4 py-3 border-b border-surface-100 hover:bg-white transition-colors cursor-pointer ${selectedChatBooking === conv.bookingId ? 'bg-white border-l-2 border-l-brand-500' : ''}`}>
-                    <div className="flex justify-between items-start mb-1"><span className="text-xs font-bold text-surface-900 truncate max-w-[140px]">{conv.guestName}</span><span className="text-[9px] text-surface-400 whitespace-nowrap ml-2">{new Date(conv.lastMsg.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></div>
-                    <p className="text-[10px] text-surface-500">Suite {conv.roomNumber}</p>
-                    <div className="flex justify-between items-center mt-1"><p className="text-[10px] text-surface-400 truncate max-w-[160px]">{conv.lastMsg.message}</p><div className="flex items-center gap-1"><span className="text-[9px] text-surface-400">{conv.msgCount}</span>{conv.unreadCount > 0 && <span className="px-1 py-0.5 bg-brand-600 text-white text-[8px] font-bold rounded-full leading-none">{conv.unreadCount}</span>}</div></div>
-                  </button>
-                ))
-              )}
+                chatConversations.filter((c) => !chatSearch.trim() || c.guestName.toLowerCase().includes(chatSearch.toLowerCase()) || c.roomNumber.includes(chatSearch)).map((conv) => {
+                  const isPast = conv.lastMsg.bookings?.status === 'completed' || conv.lastMsg.bookings?.status === 'cancelled';
+                  return (
+                  <div key={conv.bookingId} className="flex items-stretch border-b border-surface-100">
+                    <button onClick={() => setSelectedChatBooking(conv.bookingId)}
+                      className={`flex-1 text-left px-4 py-3 hover:bg-white transition-colors cursor-pointer ${selectedChatBooking === conv.bookingId ? 'bg-white border-l-2 border-l-brand-500' : ''}`}>
+                      <div className="flex justify-between items-start mb-1"><span className="text-xs font-bold text-surface-900 truncate max-w-[140px]">{conv.guestName}</span><span className="text-[9px] text-surface-400 whitespace-nowrap ml-2">{new Date(conv.lastMsg.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></div>
+                      <p className="text-[10px] text-surface-500">Suite {conv.roomNumber}</p>
+                      <div className="flex justify-between items-center mt-1"><p className="text-[10px] text-surface-400 truncate max-w-[160px]">{conv.lastMsg.message}</p><div className="flex items-center gap-1"><span className="text-[9px] text-surface-400">{conv.msgCount}</span>{conv.unreadCount > 0 && <span className="px-1 py-0.5 bg-brand-600 text-white text-[8px] font-bold rounded-full leading-none">{conv.unreadCount}</span>}</div></div>
+                    </button>
+                    {isPast && (
+                      <button
+                        onClick={() => setConfirmArchive({ bookingId: conv.bookingId, guestName: conv.guestName, roomNumber: conv.roomNumber })}
+                        disabled={archiving === conv.bookingId}
+                        className="px-3 flex items-center text-surface-300 hover:text-rose-500 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-40"
+                        title="Archive conversation (past guest)"
+                      >
+                        {archiving === conv.bookingId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                  );
+                }))
+              }
             </div>
           </>
         )}
@@ -3398,9 +3493,17 @@ function ChatContent({
                 <div className="text-center py-8"><p className="text-xs text-surface-400">No messages yet.</p></div>
               ) : (
                 chatMessages.filter((m) => m.booking_id === selectedChatBooking).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map((msg) => (
-                  <div key={msg.id} className={`flex ${msg.sender_role === 'staff' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${msg.sender_role === 'staff' ? 'bg-brand-600 text-white rounded-br-md' : 'bg-white border border-surface-200 text-surface-800 rounded-bl-md shadow-sm'}`}>
-                      <p className="text-[10px] font-semibold mb-0.5 opacity-80">{msg.sender_role === 'staff' ? 'You' : msg.sender_name}</p>
+                  <div key={msg.id} className={`flex group ${msg.sender_role === 'staff' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`relative max-w-[80%] rounded-2xl px-4 py-2.5 ${msg.sender_role === 'staff' ? 'bg-brand-600 text-white rounded-br-md' : 'bg-white border border-surface-200 text-surface-800 rounded-bl-md shadow-sm'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] font-semibold mb-0.5 opacity-80">{msg.sender_role === 'staff' ? 'You' : msg.sender_name}</p>
+                        <button
+                          onClick={() => { setDeleteTarget(msg.id); setDeletePassword(''); setDeleteError(''); }}
+                          className="p-0.5 rounded hover:bg-black/10 cursor-pointer"
+                        >
+                          <Trash2 className={`w-3 h-3 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`} />
+                        </button>
+                      </div>
                       <p className="text-sm leading-relaxed">{msg.message}</p>
                       <p className={`text-[9px] mt-1 ${msg.sender_role === 'staff' ? 'text-brand-200' : 'text-surface-400'}`}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
@@ -3419,6 +3522,42 @@ function ChatContent({
         )}
       </div>
     </div>
+      {confirmArchive && (
+        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4" onClick={() => setConfirmArchive(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl p-5 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center"><Archive className="w-5 h-5 text-amber-600" /></span>
+              <div><h3 className="text-sm font-bold text-surface-900">Archive Conversation</h3><p className="text-[11px] text-surface-500">This will remove all messages for <strong>{confirmArchive.guestName}</strong> (Suite {confirmArchive.roomNumber}) from the chat and back them up. This cannot be undone.</p></div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmArchive(null)} className="flex-1 py-2 bg-surface-100 hover:bg-surface-200 text-surface-700 font-semibold rounded-xl text-xs cursor-pointer transition-colors">Cancel</button>
+              <button onClick={() => archiveConversation(confirmArchive.bookingId, confirmArchive.guestName, confirmArchive.roomNumber)} disabled={archiving === confirmArchive.bookingId} className="flex-1 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-semibold rounded-xl text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5">{archiving === confirmArchive.bookingId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Archive className="w-3 h-3" />} Archive</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4" onClick={() => { setDeleteTarget(null); setDeletePassword(''); setDeleteError(''); }}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl p-5 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center"><Lock className="w-5 h-5 text-rose-500" /></span>
+              <div><h3 className="text-sm font-bold text-surface-900">Confirm Delete</h3><p className="text-[11px] text-surface-500">Enter your password to delete this message</p></div>
+            </div>
+            <input
+              type="password" placeholder="Your password" value={deletePassword}
+              onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !deleting) confirmDelete(); }}
+              className="w-full bg-surface-50 border border-surface-200 rounded-xl px-3 py-2.5 text-sm text-surface-800 placeholder:text-surface-400 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10 mb-3"
+            />
+            {deleteError && <p className="text-[11px] text-rose-500 font-medium mb-3">{deleteError}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setDeleteTarget(null); setDeletePassword(''); setDeleteError(''); }} className="flex-1 py-2 bg-surface-100 hover:bg-surface-200 text-surface-700 font-semibold rounded-xl text-xs cursor-pointer transition-colors">Cancel</button>
+              <button onClick={confirmDelete} disabled={deleting || !deletePassword.trim()} className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-semibold rounded-xl text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5">{deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+  </>
   );
 }
 

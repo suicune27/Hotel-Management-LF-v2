@@ -190,6 +190,26 @@ export interface StaffCall {
   bookings?: Booking & { customers?: Customer; rooms?: Room }; // joined table
 }
 
+export interface Call {
+  id: string;
+  booking_id: string | null;
+  caller_id: string | null;
+  caller_name: string;
+  caller_role: 'guest' | 'staff';
+  room_number: string | null;
+  receiver_id: string | null;
+  receiver_name: string | null;
+  department: string | null;
+  status: 'ringing' | 'waiting' | 'connected' | 'on_hold' | 'missed' | 'ended';
+  queue_position: number | null;
+  offer_data: string | null;
+  answer_data: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
 export interface StayExtension {
   id: string;
   booking_id: string;

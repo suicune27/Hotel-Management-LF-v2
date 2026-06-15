@@ -3,6 +3,7 @@ import { LogOut, Check, Loader2, Clock, User, DollarSign, X, Building, CreditCar
 import { Room, GuestOrder } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { diffHours, todayStr, nowTime, toIso } from './constants';
+import { calcRoomCharge, formatDuration } from '../../lib/booking-utils';
 
 const DEFAULT_PAYMENT_OPTIONS = ['Cash', 'Credit Card', 'Debit Card', 'GCash', 'Bank Transfer'];
 
@@ -61,7 +62,7 @@ export function CheckOutFlow({ room, currencySymbol, onClose, onBack, onComplete
       const hours = diffHours(ci, ciTime, co, coTime);
       const bookedHours = diffHours(ci, ciTime, bk.check_out_date, bk.check_out_time);
       const minHours = Math.max(bookedHours, room.min_stay_hours || bookedHours);
-      const roomCharge = Math.round(Number(room.price_per_hour) * Math.max(hours, 0.5) * 100) / 100;
+      const roomCharge = calcRoomCharge(Number(room.price_per_hour), hours);
       const ordersTotal = (orders || []).reduce((s: number, o: GuestOrder) => s + Number(o.total_price), 0);
       const chargesTotal = (charges || []).reduce((s: number, c: any) => s + Number(c.amount), 0);
 
@@ -86,7 +87,7 @@ export function CheckOutFlow({ room, currencySymbol, onClose, onBack, onComplete
     setLoading(true);
     try {
       const effectiveRoomCharge = chargeFullStay
-        ? Math.round(Number(room.price_per_hour) * invoice.bookedHours * 100) / 100
+        ? calcRoomCharge(Number(room.price_per_hour), invoice.bookedHours)
         : invoice.roomCharge;
       const totalBeforeDiscount = effectiveRoomCharge + invoice.orders.reduce((s: number, o: GuestOrder) => s + Number(o.total_price), 0) + invoice.charges.reduce((s: number, c: any) => s + Number(c.amount), 0);
       const discountAmount = discountType === 'percent' ? totalBeforeDiscount * (discount / 100) : discount;

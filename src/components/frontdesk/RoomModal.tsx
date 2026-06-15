@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, UserPlus, CalendarPlus, Shield, Sparkles, Wrench, Pencil, User, CalendarClock, ShoppingCart, Receipt, CreditCard, FileText, ArrowRightLeft, DoorOpen, CheckCircle, XCircle, Users, Phone, Clock, History, Calendar, Star, Loader2, ChevronRight, ChevronLeft, Maximize2, Minimize2, Building, BedDouble, LogOut, Check, AlertTriangle, Image, GripVertical, MoreVertical, ClipboardList, DollarSign, MapPin, Printer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Room, Booking } from '../../types';
+import { QRCodeSVG } from 'qrcode.react';
 import { StatusChip } from './StatusChip';
 import { RoomTimeline, StayProgressBar } from './RoomTimeline';
 import { STATUS_CONFIG, dt, diffHours } from './constants';
@@ -77,6 +78,34 @@ export function RoomModal({
   const [activeSection, setActiveSection] = useState<string>((initialSection as any) || 'overview');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [sectionStack, setSectionStack] = useState<string[]>([initialSection || 'overview']);
+  const [sharingCode, setSharingCode] = useState<string>(modalBooking?.sharing_code || '');
+  const [generatingSharingCode, setGeneratingSharingCode] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+
+  useEffect(() => {
+    setSharingCode(modalBooking?.sharing_code || '');
+  }, [modalBooking?.sharing_code]);
+
+  const handleGenerateSharingCode = useCallback(async () => {
+    if (!modalBooking) return;
+    setGeneratingSharingCode(true);
+    try {
+      const code = Math.floor(10000 + Math.random() * 90000).toString();
+      const { error } = await supabase.from('bookings').update({ sharing_code: code }).eq('id', modalBooking.id);
+      if (error) throw error;
+      setSharingCode(code);
+    } catch { } finally { setGeneratingSharingCode(false); }
+  }, [modalBooking]);
+
+  const handleResetSharingCode = useCallback(async () => {
+    if (!modalBooking) return;
+    setGeneratingSharingCode(true);
+    try {
+      const { error } = await supabase.from('bookings').update({ sharing_code: null }).eq('id', modalBooking.id);
+      if (error) throw error;
+      setSharingCode('');
+    } catch { } finally { setGeneratingSharingCode(false); }
+  }, [modalBooking]);
 
   // Housekeeping checklist state mapping
   const roomType = room.type?.toLowerCase() || 'standard';
@@ -441,7 +470,7 @@ export function RoomModal({
             </div>
           ) : activeSection === 'overview' ? (
             <div className="p-4 sm:p-5 space-y-4">
-              {/* Room Image & Info */}
+              {/* Room Image & Info + Guest Portal Access */}
               <div className="flex items-start gap-3">
                 {roomImages[0] ? (
                   <img src={roomImages[0]} alt={`Suite #${room.room_number}`} className="w-14 h-14 rounded-xl object-cover shadow-xs border border-surface-100 flex-shrink-0" />
@@ -482,7 +511,40 @@ export function RoomModal({
                     )}
                   </div>
                 </div>
+                <button onClick={() => setQrModalOpen(true)} className="bg-white rounded-xl p-1.5 border border-surface-100 shadow-sm shrink-0 self-start cursor-pointer hover:border-violet-300 hover:shadow-md transition-all">
+                  <QRCodeSVG
+                    value={`${window.location.origin}/guest-access?room=${room.room_number}`}
+                    size={48}
+                    level="M"
+                  />
+                </button>
               </div>
+
+              {modalBooking && (
+                <div className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-surface-600">
+                    <Shield className="w-3.5 h-3.5 text-surface-400" />
+                    <span className="text-[11px]">Device Sharing Code:</span>
+                    {sharingCode ? (
+                      <span className="font-mono font-bold text-surface-900 tracking-[0.2em] text-sm">{sharingCode}</span>
+                    ) : (
+                      <span className="text-surface-400 text-[11px]">Not set</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {sharingCode ? (
+                      <button onClick={handleResetSharingCode} disabled={generatingSharingCode} className="text-[10px] text-rose-500 hover:text-rose-600 font-semibold cursor-pointer disabled:opacity-50 px-2 py-1 rounded-md hover:bg-rose-50 transition-colors">
+                        {generatingSharingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Revoke'}
+                      </button>
+                    ) : (
+                      <button onClick={handleGenerateSharingCode} disabled={generatingSharingCode} className="text-[10px] text-brand-600 hover:text-brand-700 font-semibold cursor-pointer disabled:opacity-50 px-2 py-1 rounded-md hover:bg-brand-50 transition-colors flex items-center gap-1">
+                        {generatingSharingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Generate
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Cleaning banner */}
               {room.status === 'cleaning' && activeHousekeepingTask && (
@@ -1139,6 +1201,72 @@ export function RoomModal({
           </span>
         </div>
       </motion.div>
+
+      {/* QR Code Modal */}
+      <AnimatePresence>
+        {qrModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={() => setQrModalOpen(false)}
+            className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl text-center"
+            >
+              <div className="bg-white rounded-xl p-3 border border-surface-100 shadow-sm inline-flex mb-4">
+                <QRCodeSVG
+                  value={`${window.location.origin}/guest-access?room=${room.room_number}`}
+                  size={180}
+                  level="M"
+                />
+              </div>
+              <h3 className="text-sm font-bold text-surface-900 mb-1">Suite #{room.room_number}</h3>
+              <p className="text-[11px] text-surface-500 mb-3 break-all">
+                {window.location.origin}/guest-access?room={room.room_number}
+              </p>
+              {modalBooking && (
+                <div className="bg-surface-50 rounded-xl p-3 text-left">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-surface-400 font-medium">Device Sharing Code</span>
+                    <button
+                      onClick={sharingCode ? handleResetSharingCode : handleGenerateSharingCode}
+                      disabled={generatingSharingCode}
+                      className="text-[10px] cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {generatingSharingCode ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : sharingCode ? (
+                        <span className="text-rose-500 hover:text-rose-600 font-semibold">Revoke</span>
+                      ) : (
+                        <span className="text-brand-600 hover:text-brand-700 font-semibold">Generate</span>
+                      )}
+                    </button>
+                  </div>
+                  {sharingCode ? (
+                    <p className="font-mono font-bold text-surface-900 text-base tracking-[0.3em]">{sharingCode}</p>
+                  ) : (
+                    <p className="text-[11px] text-surface-400">No code set</p>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={() => setQrModalOpen(false)}
+                className="mt-4 w-full py-2 bg-surface-100 hover:bg-surface-200 text-surface-700 font-semibold rounded-xl text-xs cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

@@ -5,11 +5,14 @@ import { supabase } from '../lib/supabase';
 import { Booking, Profile, Customer, InventoryItem, MenuCategory, GuestOrder, ChatMessage, StaffCall, StayExtension, ChatTyping } from '../types';
 import { AlertDialog } from './AlertDialog';
 import { getSettings, fetchSettingsFromSupabase, AppSettings } from '../lib/settings';
+import { CallService } from '../lib/callService';
+import type { Call } from '../types';
 import { 
   Building, Calendar, User, LogOut, Home, Loader2, CalendarDays,
   UtensilsCrossed, MessageSquareText, Bell, Clock, Plus, Minus,
-  Send, Phone, Check, ShoppingCart, MapPin, Mail, X, CalendarPlus,
-  Receipt, Star, DoorOpen, AlertTriangle, RefreshCw, CreditCard, FileText
+  Send, Phone, PhoneOff, Check, ShoppingCart, MapPin, Mail, X, CalendarPlus,
+  Receipt, Star, DoorOpen, AlertTriangle, RefreshCw, CreditCard, FileText,
+  Mic, MicOff
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -33,6 +36,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [inputSharingCode, setInputSharingCode] = useState('');
   const [sharingError, setSharingError] = useState('');
   const [sharingVerifying, setSharingVerifying] = useState(false);
+  const [shaking, setShaking] = useState(false);
+  const [shakeKey, setShakeKey] = useState(0);
   const [generatingCode, setGeneratingCode] = useState(false);
 
   const isLocalAccess = !!roomNumber || !!bookingUid;
@@ -76,6 +81,10 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [callReason, setCallReason] = useState('');
   const [callingStaff, setCallingStaff] = useState(false);
   const [showCallStaffModal, setShowCallStaffModal] = useState(false);
+  const [guestCallStatus, setGuestCallStatus] = useState<'idle' | 'calling' | 'connected' | 'ended'>('idle');
+  const [guestCallDuration, setGuestCallDuration] = useState(0);
+  const [guestIsMuted, setGuestIsMuted] = useState(false);
+  const guestCallServiceRef = useRef<CallService | null>(null);
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
   // Stay extensions
@@ -347,7 +356,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
     // Load billing data
     const [chargesRes, paymentsRes] = await Promise.all([
-      supabase.from('charges').select('*').eq('booking_id', bookingId).order('created_at', { ascending: false }),
+      supabase.from('booking_charges').select('*').eq('booking_id', bookingId).order('created_at', { ascending: false }),
       supabase.from('payments').select('*').eq('booking_id', bookingId).order('created_at', { ascending: false }),
     ]);
     if (chargesRes.data) setGuestCharges(chargesRes.data);
@@ -508,7 +517,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         table: 'charges',
         filter: `booking_id=eq.${checkedInBooking.id}`
       }, async () => {
-        const { data } = await supabase.from('charges').select('*').eq('booking_id', checkedInBooking!.id).order('created_at', { ascending: false });
+        const { data } = await supabase.from('booking_charges').select('*').eq('booking_id', checkedInBooking!.id).order('created_at', { ascending: false });
         if (data) setGuestCharges(data);
       })
       .on('postgres_changes', {
@@ -534,7 +543,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         supabase.from('chat_messages').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: true }).limit(50),
         supabase.from('staff_calls').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: false }).limit(50),
         supabase.from('stay_extensions').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: false }).limit(50),
-        supabase.from('charges').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: false }).limit(50),
+        supabase.from('booking_charges').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: false }).limit(50),
         supabase.from('payments').select('*').eq('booking_id', checkedInBooking.id).order('created_at', { ascending: false }).limit(50),
       ]);
       if (ordersRes.data) setGuestOrders(ordersRes.data);
@@ -764,14 +773,24 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking) return;
     setCallingStaff(true);
     try {
+      const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
       const { error } = await supabase.from('staff_calls').insert({
         booking_id: checkedInBooking.id,
-        guest_id: effectiveProfile.id,
+        guest_id: isUuid(effectiveProfile.id) ? effectiveProfile.id : null,
         guest_name: effectiveProfile.full_name || 'Guest',
         reason: callReason.trim() || 'Guest needs assistance',
         status: 'pending'
       });
       if (error) throw error;
+      await supabase.from('chat_messages').insert({
+        booking_id: checkedInBooking.id,
+        sender_id: chatSenderId,
+        sender_name: effectiveProfile.full_name || 'Guest',
+        sender_role: 'guest',
+        message: callReason.trim()
+          ? `📞 Staff Call: ${callReason.trim()}`
+          : `📞 Staff Call: Guest needs assistance`
+      });
       setCallReason('');
       setAlertState({ title: 'Staff Called!', message: 'A staff member will be with you shortly.' });
       // Refresh calls
@@ -786,6 +805,104 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     } finally {
       setCallingStaff(false);
     }
+  };
+
+  const callFrontDesk = async () => {
+    if (!checkedInBooking || !effectiveProfile) return;
+    setGuestCallStatus('calling');
+    try {
+      const svc = new CallService();
+      guestCallServiceRef.current = svc;
+      const ok = await svc.requestMicrophone();
+      if (!ok) { setAlertState({ title: 'Microphone Required', message: 'Please allow microphone access to call the front desk.' }); setGuestCallStatus('idle'); return; }
+      const call = await CallService.createCall({
+        booking_id: checkedInBooking.id,
+        caller_id: (() => { const s = effectiveProfile.id || ''; return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ? s : null; })(),
+        caller_name: effectiveProfile.full_name || 'Guest',
+        caller_role: 'guest',
+        room_number: checkedInBooking.rooms?.room_number || undefined,
+        status: 'ringing',
+      });
+      if (!call) { setAlertState({ title: 'Call Failed', message: 'Could not connect to the front desk. Make sure the "calls" table has been created in your Supabase database.' }); setGuestCallStatus('idle'); return; }
+      let callTimer: ReturnType<typeof setInterval> | null = null;
+      svc.subscribeToSignaling(call.id, effectiveProfile.id || '', async (signal) => {
+        if (signal.type === 'answer') {
+          const fromDb = await CallService.getCall(call.id);
+          if (fromDb?.answer_data) await svc.handleAnswer(JSON.parse(fromDb.answer_data));
+        }
+        if (signal.type === 'declined' || signal.type === 'ended') {
+          setGuestCallStatus('ended');
+          svc.endCall();
+        }
+        if (signal.type === 'ice-candidate') svc.queueIceCandidate(signal.data);
+      });
+      const offer = await svc.createOffer();
+      if (offer) {
+        const stored = await CallService.updateCall(call.id, { offer_data: JSON.stringify(offer) });
+        if (stored) CallService.announceNewCall(call.id);
+        else console.error('Failed to store offer_data for call:', call.id);
+      }
+      // Poll for answer
+      const pollTimer = setInterval(async () => {
+        const updated = await CallService.getCall(call.id);
+        if (!updated) return;
+        if (updated.status === 'connected' && updated.answer_data) {
+          await svc.handleAnswer(JSON.parse(updated.answer_data));
+          setGuestCallStatus('connected');
+          const start = Date.now();
+          callTimer = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+          clearInterval(pollTimer);
+        }
+        if (updated.status === 'missed' || updated.status === 'ended') {
+          setGuestCallStatus('ended');
+          if (callTimer) clearInterval(callTimer);
+          clearInterval(pollTimer);
+          svc.endCall();
+          if (checkedInBooking && updated.status === 'missed') {
+            try {
+              await supabase.from('chat_messages').insert({
+                booking_id: checkedInBooking.id,
+                sender_id: chatSenderId,
+                sender_name: effectiveProfile.full_name || 'Guest',
+                sender_role: 'guest',
+                message: `📞 Missed call from Front Desk`
+              });
+            } catch {}
+          }
+        }
+      }, 1000);
+    } catch { setGuestCallStatus('idle'); }
+  };
+
+  const toggleGuestMute = () => {
+    if (guestCallServiceRef.current) {
+      setGuestIsMuted(guestCallServiceRef.current.toggleMute());
+    }
+  };
+
+  const hangUpCall = async () => {
+    if (guestCallServiceRef.current) {
+      const svc = guestCallServiceRef.current;
+      const callId = svc['currentCallIdVal'] || '';
+      await CallService.updateCall(callId, { status: 'ended', end_time: new Date().toISOString() });
+      svc.broadcastSignal('ended');
+      if (callId && guestCallDuration > 0 && checkedInBooking) {
+        const mins = Math.floor(guestCallDuration / 60);
+        const secs = guestCallDuration % 60;
+        try {
+          await supabase.from('chat_messages').insert({
+            booking_id: checkedInBooking.id,
+            sender_id: chatSenderId,
+            sender_name: effectiveProfile.full_name || 'Guest',
+            sender_role: 'guest',
+            message: `📞 Call with Front Desk ended — ${mins}:${secs.toString().padStart(2, '0')}`
+          });
+        } catch {}
+      }
+      svc.endCall();
+    }
+    setGuestCallStatus('idle');
+    setGuestCallDuration(0);
   };
 
   // ===== STAY EXTENSION =====
@@ -892,7 +1009,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     try {
       await supabase.from('staff_calls').insert({
         booking_id: checkedInBooking.id,
-        guest_id: effectiveProfile.id,
+        guest_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(effectiveProfile.id) ? effectiveProfile.id : null,
         guest_name: effectiveProfile.full_name || 'Guest',
         reason: 'Guest requested checkout — please process check-out.',
         status: 'pending',
@@ -979,131 +1096,242 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const unreadChatCount = checkedInBooking ? chatMessages.filter(m => m.sender_role === 'staff' && !m.seen_at).length : 0;
   const pendingCallCount = staffCalls.filter(c => c.status === 'pending').length;
 
+  const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const codeRef = useRef('');
+
   if (deviceLocked) {
     return (
-      <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-surface-0 text-surface-800 font-sans tracking-tight flex flex-col items-center justify-center p-4">
         <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="bg-white border border-surface-200/80 rounded-2xl p-8 max-w-sm w-full shadow-lg text-center"
+          transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+          className="w-full max-w-[300px]"
         >
-          <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-100 shadow-sm animate-pulse">
-            <DoorOpen className="w-8 h-8 text-rose-500" />
-          </div>
-          <h2 className="text-xl font-bold text-surface-900 tracking-tight mb-3">
-            Access Restricted to Original Device
-          </h2>
-          <p className="text-xs text-surface-500 leading-relaxed mb-6 font-sans">
-            For hotel security, this Guest Room Portal has been securely locked to the first device that accessed this link. 
-          </p>
-          <div className="bg-surface-50 border border-surface-200/60 rounded-xl p-4 text-xs text-left mb-6 space-y-2 font-mono text-surface-600">
-            <p className="flex items-center gap-1.5">🔒 <span><strong>Policy:</strong> One Device Lock</span></p>
-            <p className="flex items-center gap-1.5">🔑 <span><strong>Status:</strong> Key Mismatch</span></p>
-            <p className="flex items-center gap-1.5 truncate"><span>📌 <strong>Suite ID:</strong> {roomNumber ? `Suite #${roomNumber}` : 'Room Access Link'}</span></p>
-          </div>
-
-          <form 
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!inputSharingCode.trim()) return;
-              setSharingError('');
-              setSharingVerifying(true);
-              try {
-                const targetBookingId = bookingUid || lockedBooking?.id;
-                if (!targetBookingId) {
-                  setSharingError('Unable to identify booking context.');
-                  return;
-                }
-                const { data: bData } = await supabase
-                  .from('bookings')
-                  .select('*')
-                  .eq('id', targetBookingId)
-                  .maybeSingle();
-
-                if (bData && bData.sharing_code && bData.sharing_code.toUpperCase() === inputSharingCode.trim().toUpperCase()) {
-                  const localKey = `guest_device_token_${bData.id}`;
-                  localStorage.setItem(localKey, bData.device_token);
-                  setDeviceLocked(false);
-                  setLockedBooking(null);
-                  setInputSharingCode('');
-                  await loadGuestData();
-                } else {
-                  setSharingError('Invalid security sharing code. Please check with the main device holder.');
-                }
-              } catch (err: any) {
-                setSharingError(err.message || 'Verification failed. Try again.');
-              } finally {
-                setSharingVerifying(false);
-              }
-            }}
-            className="border-t border-surface-100 pt-5 text-left mb-6"
-          >
-            <h4 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-2">
-              Have a Companion Access Code?
-            </h4>
-            <p className="text-[11px] text-surface-500 leading-relaxed mb-3">
-              Enter the 5-digit security sharing code generated by the main device to securely authorize this companion device.
-            </p>
-            <div className="flex gap-2">
-              <input 
-                type="text"
-                placeholder="5-Digit Code"
-                maxLength={10}
-                value={inputSharingCode}
-                onChange={(e) => {
-                  setInputSharingCode(e.target.value);
-                  setSharingError('');
-                }}
-                className="flex-1 bg-surface-50 border border-surface-200/80 rounded-xl px-3 py-2 text-xs font-mono font-bold text-surface-800 tracking-widest placeholder:tracking-normal placeholder:font-sans focus:outline-none focus:border-emerald-500 uppercase text-center"
-              />
-              <button
-                type="submit"
-                disabled={sharingVerifying || !inputSharingCode.trim()}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs cursor-pointer transition-colors flex items-center gap-1.5"
-              >
-                {sharingVerifying ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Authorize'}
-              </button>
-            </div>
-            {sharingError && (
-              <p className="text-[10px] text-rose-500 font-medium mt-2 leading-relaxed">
-                ⚠️ {sharingError}
+          <div className="text-center">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.3, delay: 0.06 }}
+              className="w-14 h-14 mx-auto mb-5 rounded-full bg-surface-100 flex items-center justify-center"
+            >
+              <DoorOpen className="w-6 h-6 text-surface-500" />
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.25, delay: 0.12 }}
+            >
+              <h2 className="text-lg font-semibold tracking-tight mb-1">
+                Enter Passcode
+              </h2>
+              <p className="text-[13px] text-surface-400 leading-relaxed mb-8">
+                Enter the 5-digit code from the main device
               </p>
-            )}
-          </form>
+            </motion.div>
 
-          <p className="text-[11px] text-surface-400 mb-6 italic leading-relaxed">
-            Otherwise, if you cleared private cookies, or need to authorize a new phone or tablet, please ask the original device holder to share access or visit the Front Desk.
-          </p>
-          <div className="flex gap-3 justify-center">
-            <button 
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-surface-100 hover:bg-surface-200 text-surface-700 hover:text-surface-900 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+            <motion.form
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.25, delay: 0.18 }}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const code = codeRef.current;
+                if (code.length < 5) return;
+                setSharingError('');
+                setSharingVerifying(true);
+                try {
+                  const targetBookingId = bookingUid || lockedBooking?.id;
+                  if (!targetBookingId) {
+                    setSharingError('Unable to identify booking context.');
+                    return;
+                  }
+                  const { data: bData } = await supabase
+                    .from('bookings')
+                    .select('*')
+                    .eq('id', targetBookingId)
+                    .maybeSingle();
+
+                  if (bData && bData.sharing_code && bData.sharing_code.toUpperCase() === code.trim().toUpperCase()) {
+                    const localKey = `guest_device_token_${bData.id}`;
+                    localStorage.setItem(localKey, bData.device_token);
+                    setDeviceLocked(false);
+                    setLockedBooking(null);
+                    codeRef.current = '';
+                    setInputSharingCode('');
+                    await loadGuestData();
+                  } else {
+                    setSharingError('Invalid code');
+                    codeRef.current = '';
+                    setInputSharingCode('');
+                    setShaking(true);
+                    setShakeKey((k) => k + 1);
+                    setTimeout(() => setShaking(false), 500);
+                    digitRefs.current[0]?.focus();
+                  }
+                } catch (err: any) {
+                  setSharingError('Verification failed');
+                  codeRef.current = '';
+                  setInputSharingCode('');
+                  setShaking(true);
+                  setShakeKey((k) => k + 1);
+                  setTimeout(() => setShaking(false), 500);
+                  digitRefs.current[0]?.focus();
+                } finally {
+                  setSharingVerifying(false);
+                }
+              }}
             >
-              Retry
-            </button>
-            <a 
-              href="tel:+123456789" 
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5"
+              <div
+                key={shakeKey}
+                className={`flex gap-3 justify-center mb-6 ${shaking ? 'animate-shake' : ''}`}
+              >
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <input
+                    key={i}
+                    ref={(el) => { digitRefs.current[i] = el; }}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={inputSharingCode[i] || ''}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9]/g, '');
+                      const parts = codeRef.current.split('');
+                      parts[i] = val;
+                      const newCode = parts.join('').slice(0, 5);
+                      codeRef.current = newCode;
+                      setInputSharingCode(newCode);
+                      setSharingError('');
+                      if (val && i < 4) {
+                        digitRefs.current[i + 1]?.focus();
+                      }
+                      if (newCode.length === 5 && !sharingVerifying) {
+                        const form = (e.target as HTMLElement).closest('form');
+                        form?.requestSubmit();
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Backspace' && !inputSharingCode[i] && i > 0) {
+                        digitRefs.current[i - 1]?.focus();
+                      }
+                      if (e.key === 'ArrowLeft' && i > 0) {
+                        digitRefs.current[i - 1]?.focus();
+                      }
+                      if (e.key === 'ArrowRight' && i < 4) {
+                        digitRefs.current[i + 1]?.focus();
+                      }
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const pasted = e.clipboardData.getData('text').replace(/[^0-9]/g, '').slice(0, 5);
+                      if (pasted) {
+                        codeRef.current = pasted;
+                        setInputSharingCode(pasted);
+                        setSharingError('');
+                        const nextIdx = Math.min(pasted.length, 4);
+                        digitRefs.current[pasted.length >= 5 ? 4 : nextIdx]?.focus();
+                        if (pasted.length === 5 && !sharingVerifying) {
+                          const form = (e.target as HTMLElement).closest('form');
+                          setTimeout(() => form?.requestSubmit(), 50);
+                        }
+                      }
+                    }}
+                    className={`w-11 h-11 rounded-full text-center text-lg font-semibold font-mono outline-none transition-all duration-150 ${inputSharingCode[i] ? 'bg-brand-500 text-white' : 'bg-surface-100 text-transparent'} ${shaking ? 'ring-2 ring-rose-400/60 bg-rose-100' : 'ring-1 ring-surface-300 focus:ring-2 focus:ring-brand-400'}`}
+                  />
+                ))}
+              </div>
+              {sharingVerifying && (
+                <div className="flex items-center justify-center gap-2 text-sm text-surface-500 mb-6">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Verifying...
+                </div>
+              )}
+              {sharingError && !sharingVerifying && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-sm text-rose-500 font-medium text-center mb-6"
+                >
+                  {sharingError}
+                </motion.p>
+              )}
+            </motion.form>
+
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3, delay: 0.3 }}
+              className="text-[13px] text-surface-400"
             >
-              <Phone className="w-3.5 h-3.5" /> Call Desk
-            </a>
+              Need help? Ask the device holder or visit the Front Desk.
+            </motion.p>
           </div>
         </motion.div>
       </div>
     );
   }
 
-  return (
+  return loading ? (
+    <div className="min-h-screen bg-gradient-to-br from-surface-50 via-white to-brand-50/30 text-surface-800 font-sans tracking-tight flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--color-brand-100/0.3)_0%,_transparent_60%)] pointer-events-none" />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+        className="relative text-center"
+      >
+        {settings.brand.logoUrl ? (
+          <motion.img
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+            src={settings.brand.logoUrl}
+            alt={settings.brand.hotelName}
+            className="h-14 mx-auto mb-5"
+          />
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+            className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-lg shadow-brand-500/20"
+          >
+            <span className="text-white font-bold text-xl font-mono">{(settings.brand.hotelName || 'GH').charAt(0)}</span>
+          </motion.div>
+        )}
+        <motion.h1
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="text-lg font-display font-bold text-surface-900 mb-6"
+        >
+          {settings.brand.hotelName || 'Grand Hotel'}
+        </motion.h1>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.3 }}
+          className="flex items-center justify-center gap-2 text-surface-400"
+        >
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-xs font-mono">Preparing your stay...</span>
+        </motion.div>
+      </motion.div>
+    </div>
+  ) : (
     <div className="min-h-screen bg-surface-50 text-surface-800 font-sans tracking-tight flex flex-col">
 
       <div className="flex-1">
         <header className="sticky top-0 bg-white/95 backdrop-blur-md z-40 border-b border-surface-100 shadow-sm">
           <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => { if (!isLocalAccess) onNavigate('login'); }}>
-              <span className="p-1.5 sm:p-2 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white rounded-lg font-bold text-sm sm:text-base font-mono">GH</span>
+              {settings.brand.logoUrl ? (
+                <img src={settings.brand.logoUrl} alt={settings.brand.hotelName} className="h-8 sm:h-9 w-auto" />
+              ) : (
+                <span className="p-1.5 sm:p-2 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white rounded-lg font-bold text-sm sm:text-base font-mono">{(settings.brand.hotelName || 'GH').charAt(0)}</span>
+              )}
               <div className="min-w-0">
-                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber}` : 'Guest Portal'}</span>
+                <span className="text-sm sm:text-base font-semibold tracking-tight text-surface-900 font-sans truncate block">{isLocalAccess ? `Suite #${roomNumber || '—'}` : 'Guest Portal'}</span>
                 <span className="text-[8px] sm:text-[9px] block font-mono text-emerald-600 tracking-wider font-bold uppercase -mt-0.5 truncate">
                   {isLocalAccess ? 'Local Network Access' : `Welcome, ${effectiveProfile.full_name?.split(' ')[0] || 'Guest'}`}
                 </span>
@@ -1169,12 +1397,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         </div>
 
         <main className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
-          {loading ? (
-            <div className="text-center py-20 flex flex-col items-center justify-center space-y-4">
-              <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-              <p className="text-xs text-surface-500 font-mono">Loading your experience...</p>
-            </div>
-          ) : isLocalAccess && !checkedInBooking ? (
+          {isLocalAccess && !checkedInBooking ? (
             <div className="max-w-md mx-auto text-center py-16">
               <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-amber-100">
                 <Building className="w-8 h-8 text-amber-500" />
@@ -1784,6 +2007,15 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                           className="px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
                         >
                           <Bell className="w-3 h-3 text-white" /> Call Staff
+                        </button>
+                        <button
+                          type="button"
+                          onClick={callFrontDesk}
+                          disabled={guestCallStatus !== 'idle'}
+                          className="px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md disabled:opacity-50"
+                        >
+                          {guestCallStatus === 'calling' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3 text-white" />}
+                          {guestCallStatus === 'calling' ? 'Calling...' : guestCallStatus === 'connected' ? 'On Call' : 'Call Front Desk'}
                         </button>
                         <button
                           type="button"
@@ -2506,6 +2738,43 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           </div>
         )}
       </AnimatePresence>
+
+      {/* Audio element for remote call audio */}
+      <audio ref={(el) => { if (el && guestCallServiceRef.current?.remoteStream) { el.srcObject = guestCallServiceRef.current.remoteStream; el.play().catch(() => {}); }}} autoPlay />
+
+      {/* Call panel for guest — matches front desk style */}
+      {guestCallStatus !== 'idle' && (
+        <div className="fixed bottom-6 right-6 z-[200] w-72 bg-white rounded-2xl shadow-2xl border border-surface-100 overflow-hidden animate-scale-in">
+          <div className="px-4 py-3 bg-brand-600 text-white flex items-center justify-between">
+            <div className="flex items-center gap-2"><Phone className="w-4 h-4" /><span className="text-xs font-bold">Call</span></div>
+          </div>
+          <div className={`p-4 ${guestCallStatus === 'connected' ? 'bg-emerald-50' : guestCallStatus === 'ended' ? 'bg-surface-50' : 'bg-brand-50'}`}>
+            <div className="text-center mb-3">
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${guestCallStatus === 'connected' ? 'bg-emerald-200' : guestCallStatus === 'ended' ? 'bg-surface-200' : 'bg-brand-200 animate-pulse'}`}>
+                {guestCallStatus === 'calling' ? <Loader2 className="w-8 h-8 text-brand-600 animate-spin" /> : <Phone className={`w-8 h-8 ${guestCallStatus === 'connected' ? 'text-emerald-600' : 'text-surface-500'}`} />}
+              </div>
+              <p className="text-sm font-bold text-surface-900">Front Desk</p>
+              {guestCallStatus === 'calling' && <p className="text-[10px] text-brand-600 font-semibold mt-0.5">Connecting...</p>}
+              {guestCallStatus === 'ended' && <p className="text-[10px] text-surface-500 mt-0.5">Call ended</p>}
+              {guestCallStatus === 'connected' && (
+                <p className="text-lg font-mono font-bold text-emerald-700 mt-1">
+                  {Math.floor(guestCallDuration / 60).toString().padStart(2, '0')}:{(guestCallDuration % 60).toString().padStart(2, '0')}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-center gap-3">
+              {guestCallStatus === 'connected' && (
+                <button onClick={toggleGuestMute} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${guestIsMuted ? 'bg-rose-100 text-rose-600' : 'bg-white text-surface-600 hover:bg-surface-50'}`}>
+                  {guestIsMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
+              <button onClick={guestCallStatus === 'ended' ? () => setGuestCallStatus('idle') : hangUpCall} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${guestCallStatus === 'ended' ? 'bg-surface-100 text-surface-600 hover:bg-surface-200' : 'bg-rose-600 text-white hover:bg-rose-700'}`}>
+                {guestCallStatus === 'ended' ? <X className="w-4 h-4" /> : <PhoneOff className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -20,23 +20,24 @@ export function StatCards({ counts, expectedToday, dailyRevenue, activeFilter, c
   ];
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
       {items.map((item) => {
         const cfg = item.key !== 'arrivals' && item.key !== 'revenue' ? STATUS_CONFIG[item.key] : null;
         const isActive = activeFilter === item.key;
-        const bgColor = cfg?.bg || (item.key === 'arrivals' ? 'bg-emerald-50 border-emerald-200' : 'bg-brand-50 border-brand-200');
+        const bgColor = cfg?.bg || (item.key === 'arrivals' ? 'bg-emerald-50' : 'bg-brand-50');
+        const borderColor = cfg ? 'border-transparent' : (item.key === 'arrivals' ? 'border-emerald-200/50' : 'border-brand-200/50');
         const countColor = cfg?.color || (item.key === 'arrivals' ? 'text-emerald-700' : 'text-brand-700');
 
         const inner = (
           <>
-            <p className={`text-xl font-bold leading-none ${countColor}`}>{item.isString ? item.value : item.value}</p>
-            <p className="text-[9px] font-semibold text-surface-400 uppercase tracking-wider mt-1.5">{item.label}</p>
+            <p className={`text-lg font-bold leading-none ${countColor}`}>{item.isString ? item.value : item.value}</p>
+            <p className="text-[9px] font-medium text-surface-400 mt-1">{item.label}</p>
           </>
         );
 
         if (item.key === 'arrivals' || item.key === 'revenue') {
           return (
-            <div key={item.key} className={`${bgColor} rounded-xl p-3 text-center border transition-all`}>
+            <div key={item.key} className={`${bgColor} ${borderColor} rounded-xl p-2.5 text-center border`}>
               {inner}
             </div>
           );
@@ -46,10 +47,10 @@ export function StatCards({ counts, expectedToday, dailyRevenue, activeFilter, c
           <button
             key={item.key}
             onClick={() => onFilterChange(isActive ? null : item.key)}
-            className={`rounded-xl p-3 text-center border transition-all cursor-pointer active:scale-[0.97] ${
+            className={`rounded-xl p-2.5 text-center border transition-all cursor-pointer active:scale-[0.97] ${
               isActive
                 ? 'ring-2 ring-brand-500/20 border-brand-300 bg-brand-50 shadow-xs'
-                : `${bgColor} hover:shadow-sm hover:-translate-y-0.5`
+                : `${bgColor} ${borderColor} hover:shadow-sm hover:-translate-y-0.5`
             }`}
           >
             {inner}

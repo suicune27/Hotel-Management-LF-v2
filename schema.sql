@@ -174,6 +174,38 @@ CREATE TABLE IF NOT EXISTS public.chat_typing (
     UNIQUE(booking_id, user_id)
 );
 
+-- Chat message archive bin (deleted conversations backup)
+CREATE TABLE IF NOT EXISTS public.chat_bin (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID NOT NULL,
+    guest_name TEXT NOT NULL,
+    room_number TEXT NOT NULL,
+    messages JSONB NOT NULL,
+    deleted_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Real-time voice call system (WebRTC signaling via Supabase Realtime broadcast)
+CREATE TABLE IF NOT EXISTS public.calls (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID REFERENCES public.bookings(id) ON DELETE SET NULL,
+    caller_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    caller_name TEXT NOT NULL,
+    caller_role TEXT NOT NULL CHECK (caller_role IN ('guest', 'staff')),
+    room_number TEXT,
+    receiver_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    receiver_name TEXT,
+    department TEXT,
+    status TEXT NOT NULL DEFAULT 'ringing' CHECK (status IN ('ringing', 'waiting', 'connected', 'on_hold', 'missed', 'ended')),
+    queue_position INTEGER,
+    offer_data TEXT,
+    answer_data TEXT,
+    start_time TIMESTAMP WITH TIME ZONE,
+    end_time TIMESTAMP WITH TIME ZONE,
+    duration_seconds INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS public.staff_calls (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     booking_id UUID REFERENCES public.bookings(id) ON DELETE CASCADE NOT NULL,
@@ -835,6 +867,15 @@ ALTER TABLE public.holiday_calendar ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.salary_adjustments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payroll_notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payroll_backups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chat_bin ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.calls ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_bin' AND policyname='Chat bin viewable by authenticated') THEN CREATE POLICY "Chat bin viewable by authenticated" ON public.chat_bin FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_bin' AND policyname='Chat bin insertable by front desk and admin') THEN CREATE POLICY "Chat bin insertable by front desk and admin" ON public.chat_bin FOR INSERT TO authenticated WITH CHECK (public.is_front_desk() OR public.is_admin()); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='chat_bin' AND policyname='Chat bin deletable by front desk and admin') THEN CREATE POLICY "Chat bin deletable by front desk and admin" ON public.chat_bin FOR DELETE TO authenticated USING (public.is_front_desk() OR public.is_admin()); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls viewable by authenticated') THEN CREATE POLICY "Calls viewable by authenticated" ON public.calls FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls insertable by authenticated') THEN CREATE POLICY "Calls insertable by authenticated" ON public.calls FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='calls' AND policyname='Calls updatable by authenticated') THEN CREATE POLICY "Calls updatable by authenticated" ON public.calls FOR UPDATE TO authenticated USING (true) WITH CHECK (true); END IF; END $$;
 
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='payroll_components' AND policyname='Payroll components viewable by self and admins') THEN CREATE POLICY "Payroll components viewable by self and admins" ON public.payroll_components FOR SELECT TO authenticated USING (public.is_admin() OR EXISTS (SELECT 1 FROM public.payroll_entries pe WHERE pe.id = payroll_entry_id AND pe.user_id = auth.uid())); END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='payroll_components' AND policyname='Payroll components manageable by admins') THEN CREATE POLICY "Payroll components manageable by admins" ON public.payroll_components FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin()); END IF; END $$;
@@ -885,4 +926,8 @@ END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='bookings' AND policyname='Enable public guest device token registration') THEN
   CREATE POLICY "Enable public guest device token registration" ON public.bookings FOR UPDATE USING (true) WITH CHECK (true);
 END IF; END $$;
+
+-- Ensure existing calls tables have all columns (safe to re-run)
+ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS offer_data TEXT;
+ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS answer_data TEXT;
 

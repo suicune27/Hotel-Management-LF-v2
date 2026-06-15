@@ -8,6 +8,10 @@ import {
   diffHours, todayStr, tomorrowStr, nowTime, toIso, to24h, timeToMin, minToTime12,
   snapToNearest, dt, BookingConflict,
 } from './constants';
+import {
+  DURATION_PRESETS, addHoursToDate, formatDuration, getMinStay, calcRoomCharge,
+  hoursBetween, isCheckOutBeforeCheckIn,
+} from '../../lib/booking-utils';
 
 interface CheckInWizardProps {
   room: Room;
@@ -36,11 +40,23 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
   const [guestName, setGuestName] = useState(() => booking?.customers?.full_name || '');
   const [guestEmail, setGuestEmail] = useState(() => booking?.customers?.email || '');
   const [checkInDate, setCheckInDate] = useState(() => booking ? fmtDate(booking.check_in_date) : todayStr());
-  const [checkOutDate, setCheckOutDate] = useState(() => booking ? fmtDate(booking.check_out_date) : tomorrowStr());
+  const [checkOutDate, setCheckOutDate] = useState(() => {
+    if (booking) return fmtDate(booking.check_out_date);
+    const hrs = room.min_stay_hours || 3;
+    const now = new Date();
+    const d = new Date(now.getTime() + hrs * 3600000);
+    return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
+  });
   const [checkInTime, setCheckInTime] = useState(() => booking?.check_in_time || nowTime());
-  const [checkOutTime, setCheckOutTime] = useState(() => booking?.check_out_time || '12:00 PM');
+  const [checkOutTime, setCheckOutTime] = useState(() => {
+    if (booking?.check_out_time) return booking.check_out_time;
+    const hrs = room.min_stay_hours || 3;
+    const d = new Date(Date.now() + hrs * 3600000);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  });
   const [roomBookings, setRoomBookings] = useState<BookingConflict[]>([]);
   const [bookingCheckLoading, setBookingCheckLoading] = useState(false);
+  const [selectedDuration, setSelectedDuration] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Group Booking Variables
@@ -52,22 +68,16 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
   useEffect(() => {
     if (!booking) {
       const hrs = room.min_stay_hours || 3;
+      setSelectedDuration(hrs);
       const ciOpts = (room.check_in_times || []).map(timeToMin);
-      const coOpts = (room.check_out_times || []).map(timeToMin);
       const nowM = new Date().getHours() * 60 + new Date().getMinutes();
       const snapCiM = snapToNearest(nowM, ciOpts);
       setCheckInTime(minToTime12(snapCiM));
-      const minCoM = snapCiM + hrs * 60;
-      let coDays = Math.floor(minCoM / 1440);
-      let coM = minCoM % 1440;
-      const sorted = [...coOpts].sort((a, b) => a - b);
-      let snapCoM = sorted.find((t) => t >= coM);
-      if (snapCoM === undefined) { coDays += 1; snapCoM = sorted.length > 0 ? sorted[0] : coM; }
-      setCheckOutTime(minToTime12(snapCoM));
-      if (coDays > 0) {
-        const d = new Date(); d.setDate(d.getDate() + coDays);
-        setCheckOutDate(`${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`);
-      }
+      const ciDate = todayStr();
+      setCheckInDate(ciDate);
+      const result = addHoursToDate(ciDate, minToTime12(snapCiM), hrs);
+      setCheckOutDate(result.date);
+      setCheckOutTime(result.time);
 
       // Load other available rooms for group booking linkage
       supabase.from('rooms').select('*').eq('status', 'available').neq('id', room.id).then(({ data }) => {
@@ -117,14 +127,14 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
   const stayHrs = booking
     ? diffHours(booking.check_in_date, booking.check_in_time, booking.check_out_date, booking.check_out_time)
     : diffHours(ciDate, ciTime, coDate, coTime);
-  const totalPrice = booking ? Number(booking.total_price) : Math.round(Number(room.price_per_hour) * stayHrs * 100) / 100;
-  const minStay = room.min_stay_hours || 3;
+  const totalPrice = booking ? Number(booking.total_price) : calcRoomCharge(Number(room.price_per_hour), stayHrs);
+  const minStay = getMinStay(room);
   const rawConflicts = booking ? [] : getConflicts(checkInDate, checkOutDate, checkInTime, checkOutTime);
   // For walk-in, allow booking if guest arrival is > minStay hours from now (future walk-in)
   const hoursUntilCheckIn = (new Date(dt(ciDate, ciTime)).getTime() - Date.now()) / 3600000;
   const isFutureWalkin = mode !== 'reservation' && hoursUntilCheckIn > minStay;
   const conflicts = isFutureWalkin ? [] : rawConflicts;
-  const isValid = guestName.trim().length > 0 && stayHrs >= minStay && conflicts.length === 0 && dt(ciDate, ciTime) < dt(coDate, coTime);
+  const isValid = guestName.trim().length > 0 && stayHrs >= minStay && conflicts.length === 0 && !isCheckOutBeforeCheckIn(ciDate, ciTime, coDate, coTime);
 
   const handleConfirm = async () => {
     if (!isValid) return;
@@ -158,7 +168,7 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
       const actualCiDate = isReservation || isFutureWalkin ? ciDate : toIso(todayStr());
       const actualCiTime = isReservation || isFutureWalkin ? ciTime : to24h(nowTime());
       const actualStayHrs = diffHours(actualCiDate, actualCiTime, coDate, coTime);
-      const actualTotal = Math.round(Number(room.price_per_hour) * Math.max(actualStayHrs, 0.5) * 100) / 100;
+      const actualTotal = calcRoomCharge(Number(room.price_per_hour), actualStayHrs);
 
       let customerId: string | null = null;
       const customerEmail = guestEmail.trim() || `guest-${Date.now()}@temp.local`;
@@ -228,7 +238,7 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
           const matchedRoom = availableRooms.find(r => r.id === targetId);
           if (!matchedRoom) continue;
           
-          const targetTotal = Math.round(Number(matchedRoom.price_per_hour) * Math.max(actualStayHrs, 0.5) * 100) / 100;
+          const targetTotal = calcRoomCharge(Number(matchedRoom.price_per_hour), actualStayHrs);
           await supabase.from('bookings').insert({
             room_id: matchedRoom.id,
             customer_id: customerId,
@@ -311,12 +321,14 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
               <div>
                 <label className="block text-[11px] font-semibold text-surface-500 mb-1">Guest Name *</label>
                 <input type="text" value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="e.g. John Smith"
-                  className="input-field" autoFocus />
+                  className="input-field" autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter' && guestName.trim()) setStep('schedule'); }} />
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-surface-500 mb-1">Guest Email <span className="text-surface-300 font-normal">(optional)</span></label>
                 <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} placeholder="e.g. john@example.com"
-                  className="input-field" />
+                  className="input-field"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && guestName.trim()) setStep('schedule'); }} />
               </div>
               <div className="bg-surface-0 rounded-xl p-2.5 flex items-center gap-2 text-[11px] text-surface-500">
                 <Search className="w-3 h-3 text-surface-400" />
@@ -396,19 +408,56 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
 
           {!booking && step === 'schedule' && (
             <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-surface-500 mb-1.5">Stay Duration</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {DURATION_PRESETS.map((p) => (
+                    <button
+                      key={p.hours}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDuration(p.hours);
+                        const result = addHoursToDate(checkInDate, checkInTime, p.hours);
+                        setCheckOutDate(result.date);
+                        setCheckOutTime(result.time);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        selectedDuration === p.hours
+                          ? 'bg-brand-600 text-white border-brand-600'
+                          : 'bg-surface-0 text-surface-600 border-surface-200 hover:border-brand-300 hover:text-brand-700'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDuration(null)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      selectedDuration === null
+                        ? 'bg-surface-100 text-surface-700 border-surface-300'
+                        : 'bg-surface-0 text-surface-500 border-surface-200 hover:border-surface-300'
+                    }`}
+                  >
+                    Custom
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="space-y-1.5">
                   <label className="block text-[11px] font-semibold text-surface-500">Check In</label>
                   <input type="text" inputMode="numeric" value={checkInDate}
                     onChange={(e) => setCheckInDate(e.target.value)} placeholder="mm/dd/yyyy"
-                    className="input-field" />
+                    className="input-field"
+                    onKeyDown={(e) => { if (e.key === 'Enter' && stayHrs >= minStay && conflicts.length === 0 && !isCheckOutBeforeCheckIn(ciDate, ciTime, coDate, coTime)) setStep('confirm'); }} />
                   <TimePicker value={checkInTime} onChange={setCheckInTime} options={room.check_in_times || []} placeholder="e.g. 2:00 PM" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-[11px] font-semibold text-surface-500">Check Out</label>
                   <input type="text" inputMode="numeric" value={checkOutDate}
                     onChange={(e) => setCheckOutDate(e.target.value)} placeholder="mm/dd/yyyy"
-                    className="input-field" />
+                    className="input-field"
+                    onKeyDown={(e) => { if (e.key === 'Enter' && stayHrs >= minStay && conflicts.length === 0 && !isCheckOutBeforeCheckIn(ciDate, ciTime, coDate, coTime)) setStep('confirm'); }} />
                   <TimePicker value={checkOutTime} onChange={setCheckOutTime} options={room.check_out_times || []} placeholder="e.g. 12:00 PM" />
                 </div>
               </div>
@@ -472,8 +521,8 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
               </div>
 
               <div className="space-y-1 text-[11px]">
-                {stayHrs < minStay && <p className="text-rose-500 flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> Minimum stay: {minStay}h (selected: {Math.round(stayHrs * 10) / 10}h)</p>}
-                {dt(ciDate, ciTime) >= dt(coDate, coTime) && <p className="text-rose-500 flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> Check-out must be after check-in</p>}
+                {stayHrs < minStay && <p className="text-rose-500 flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> Minimum stay: {formatDuration(minStay)} (selected: {formatDuration(stayHrs)})</p>}
+                {isCheckOutBeforeCheckIn(ciDate, ciTime, coDate, coTime) && <p className="text-rose-500 flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> Check-out must be after check-in</p>}
               </div>
             </div>
           )}
@@ -487,12 +536,12 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
                 </div>
                 <div className="p-2.5 flex items-center gap-2.5">
                   <Calendar className="w-3.5 h-3.5 text-surface-400" />
-                  <div><p className="text-[11px] text-surface-700">{checkInDate} {checkInTime} → {checkOutDate} {checkOutTime}</p><p className="text-[9px] text-surface-400">{Math.round(stayHrs * 10) / 10} hours</p></div>
+                  <div><p className="text-[11px] text-surface-700">{checkInDate} {checkInTime} → {checkOutDate} {checkOutTime}</p><p className="text-[9px] text-surface-400">{formatDuration(stayHrs)}</p></div>
                 </div>
               </div>
 
               <div className="bg-brand-50 rounded-xl p-3.5 space-y-2">
-                <div className="flex justify-between text-sm"><span className="text-surface-500">Duration</span><span className="font-semibold text-surface-800">{Math.round(stayHrs * 10) / 10} hours</span></div>
+                <div className="flex justify-between text-sm"><span className="text-surface-500">Duration</span><span className="font-semibold text-surface-800">{formatDuration(stayHrs)}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-surface-500">Rate</span><span className="font-semibold text-surface-800">{currencySymbol}{Number(room.price_per_hour).toLocaleString()}/hr</span></div>
                 <div className="border-t border-brand-200 pt-2 flex justify-between text-sm"><span className="font-bold text-surface-600">Estimated Total</span><span className="font-bold text-surface-900 text-base">{currencySymbol}{totalPrice.toLocaleString()}</span></div>
                 {booking && (
@@ -520,7 +569,7 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
             </button>
           )}
           {!booking && step === 'schedule' && (
-            <button onClick={() => setStep('confirm')} disabled={stayHrs < minStay || conflicts.length > 0 || dt(ciDate, ciTime) >= dt(coDate, coTime)} className="btn-primary !px-4">
+            <button onClick={() => setStep('confirm')} disabled={stayHrs < minStay || conflicts.length > 0 || isCheckOutBeforeCheckIn(ciDate, ciTime, coDate, coTime)} className="btn-primary !px-4">
               Review <ChevronRight className="w-3 h-3" />
             </button>
           )}

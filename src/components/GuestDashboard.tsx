@@ -85,6 +85,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestCallDuration, setGuestCallDuration] = useState(0);
   const [guestIsMuted, setGuestIsMuted] = useState(false);
   const guestCallServiceRef = useRef<CallService | null>(null);
+  const guestAudioRef = useRef<HTMLAudioElement | null>(null);
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
   // Stay extensions
@@ -602,6 +603,16 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     prevOrderStatusesRef.current = Object.fromEntries(guestOrders.map(o => [o.id, o.status]));
     return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
   }, [guestOrders]);
+
+  // Connect remote audio stream to audio element when call connects
+  // Uses guestCallDuration as secondary dependency so the effect re-runs on timer ticks
+  // until remoteStream is populated (ontrack fires asynchronously after WebRTC connects)
+  useEffect(() => {
+    if (guestCallStatus === 'connected' && guestAudioRef.current && guestCallServiceRef.current?.remoteStream) {
+      guestAudioRef.current.srcObject = guestCallServiceRef.current.remoteStream;
+      guestAudioRef.current.play().catch(() => {});
+    }
+  }, [guestCallStatus, guestCallDuration]);
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2740,7 +2751,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       </AnimatePresence>
 
       {/* Audio element for remote call audio */}
-      <audio ref={(el) => { if (el && guestCallServiceRef.current?.remoteStream) { el.srcObject = guestCallServiceRef.current.remoteStream; el.play().catch(() => {}); }}} autoPlay />
+      <audio ref={guestAudioRef} autoPlay />
 
       {/* Call panel for guest — matches front desk style */}
       {guestCallStatus !== 'idle' && (

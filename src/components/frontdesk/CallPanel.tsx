@@ -56,10 +56,12 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   useEffect(() => {
     const stream = callSvc.current.remoteStream;
     const el = audioRef.current;
-    console.log('[CallPanel] Remote stream effect: stream=', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el=', !!el);
-    if (stream && el) {
+    console.log('[CallPanel] Remote stream effect: stream=', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el=', !!el, 'alreadySet=', el?.srcObject === stream);
+    if (stream && el && el.srcObject !== stream) {
       console.log('[CallPanel] Connecting remote stream to audio element!');
       el.srcObject = stream;
+      el.volume = 1;
+      el.muted = false;
       el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
     }
   });

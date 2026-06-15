@@ -616,10 +616,12 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       const svc = guestCallServiceRef.current;
       const stream = svc?.remoteStream;
       console.log('[GuestAudio] Poll attempt', attempts, 'stream:', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el:', !!el);
-      if (stream && el) {
+      if (stream && el && el.srcObject !== stream) {
         console.log('[GuestAudio] CONNECTING remote stream to audio element!');
         console.log('[GuestAudio] Audio tracks in stream:', stream.getAudioTracks().map(t => `${t.label}:${t.enabled}:${t.readyState}`));
         el.srcObject = stream;
+        el.volume = 1;
+        el.muted = false;
         el.play().then(() => console.log('[GuestAudio] Audio play() SUCCESS')).catch((err) => console.log('[GuestAudio] Audio play() FAILED:', err));
         clearInterval(check);
       }

@@ -605,14 +605,47 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   }, [guestOrders]);
 
   // Connect remote audio stream to audio element when call connects
-  // Uses guestCallDuration as secondary dependency so the effect re-runs on timer ticks
-  // until remoteStream is populated (ontrack fires asynchronously after WebRTC connects)
+  // Polls every 200ms for remoteStream (ontrack fires asynchronously after WebRTC negotiates)
   useEffect(() => {
-    if (guestCallStatus === 'connected' && guestAudioRef.current && guestCallServiceRef.current?.remoteStream) {
-      guestAudioRef.current.srcObject = guestCallServiceRef.current.remoteStream;
-      guestAudioRef.current.play().catch(() => {});
-    }
-  }, [guestCallStatus, guestCallDuration]);
+    if (guestCallStatus !== 'connected') return;
+    const el = guestAudioRef.current;
+    const check = setInterval(() => {
+      const stream = guestCallServiceRef.current?.remoteStream;
+      if (stream && el) {
+        el.srcObject = stream;
+        el.play().catch(() => {});
+        clearInterval(check);
+      }
+    }, 200);
+    return () => clearInterval(check);
+  }, [guestCallStatus]);
+
+  // Auto-disconnect call when guest refreshes/closes the page
+  useEffect(() => {
+    const handleUnload = () => {
+      const svc = guestCallServiceRef.current;
+      if (!svc) return;
+      const callId = svc['currentCallIdVal'];
+      if (callId) {
+        // Best-effort: Supabase client fires request with keepalive semantics
+        CallService.updateCall(callId, { status: 'ended', end_time: new Date().toISOString() });
+        svc.endCall();
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      // Also end call on component unmount (navigation away / refresh)
+      const svc = guestCallServiceRef.current;
+      if (!svc) return;
+      const callId = svc['currentCallIdVal'];
+      if (callId && guestCallStatus === 'connected') {
+        CallService.updateCall(callId, { status: 'ended', end_time: new Date().toISOString() });
+        svc.broadcastSignal('ended');
+        svc.endCall();
+      }
+    };
+  }, [guestCallStatus]);
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -2733,7 +2733,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         )}
       </AnimatePresence>
 
-      {/* Express Checkout Confirmation Dialog */}
+      {/* Express Checkout Confirmation Dialog with Expense Summary */}
       <AnimatePresence>
         {showCheckoutConfirmModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -2760,13 +2760,40 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                 </div>
               </div>
 
-              <div className="space-y-2 text-xs leading-relaxed text-surface-600 bg-surface-50 p-3.5 rounded-xl border border-surface-100">
-                <p>
-                  You are about to submit a checkout request for <strong className="text-surface-800">Suite {(checkedInBooking as any)?.rooms?.room_number || roomNumber || 'N/A'}</strong>.
-                </p>
-                <p>
-                  This notifies the front desk instantly to prepare your final invoice statement and dispatch the housekeeping team.
-                </p>
+              {/* Expense Summary */}
+              <div className="bg-surface-50 rounded-xl border border-surface-100 divide-y divide-surface-200">
+                <div className="px-3.5 py-2.5 flex items-center justify-between">
+                  <span className="text-[11px] text-surface-600">Room Charge</span>
+                  <span className="text-xs font-semibold text-surface-900">{settings.currencySymbol}{Number(checkedInBooking?.total_price || 0).toLocaleString()}</span>
+                </div>
+                {guestOrders.filter(o => o.status !== 'cancelled').length > 0 && (
+                  <div className="px-3.5 py-2.5 flex items-center justify-between">
+                    <span className="text-[11px] text-surface-600">Food & Beverage ({guestOrders.filter(o => o.status !== 'cancelled').length} order{guestOrders.filter(o => o.status !== 'cancelled').length > 1 ? 's' : ''})</span>
+                    <span className="text-xs font-semibold text-surface-900">{settings.currencySymbol}{guestOrders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + Number(o.total_price), 0).toLocaleString()}</span>
+                  </div>
+                )}
+                {guestCharges.map((c: any) => (
+                  <div key={c.id} className="px-3.5 py-2.5 flex items-center justify-between">
+                    <span className="text-[11px] text-surface-600">{c.description}</span>
+                    <span className="text-xs font-semibold text-surface-900">{settings.currencySymbol}{Number(c.amount).toLocaleString()}</span>
+                  </div>
+                ))}
+                {guestPayments.length > 0 && guestPayments.map((p: any) => (
+                  <div key={p.id} className="px-3.5 py-2.5 flex items-center justify-between">
+                    <span className="text-[11px] text-surface-600">Payment ({p.method})</span>
+                    <span className="text-xs font-semibold text-emerald-600">-{settings.currencySymbol}{Number(p.amount).toLocaleString()}</span>
+                  </div>
+                ))}
+                <div className="px-3.5 py-3 flex items-center justify-between bg-surface-100/80 rounded-b-xl">
+                  <span className="text-xs font-bold text-surface-800">Estimated Balance Due</span>
+                  <span className="text-sm font-black text-surface-900">
+                    {settings.currencySymbol}{Math.max(0, (Number(checkedInBooking?.total_price || 0) + guestCharges.reduce((s: number, c: any) => s + Number(c.amount), 0) + guestOrders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + Number(o.total_price), 0)) - guestPayments.reduce((s: number, p: any) => s + Number(p.amount), 0)).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-[10px] text-surface-400 leading-relaxed bg-amber-50/50 p-3 rounded-xl border border-amber-100">
+                Submitting this request will save your current expenses and notify the front desk to prepare your final invoice.
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -2785,7 +2812,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                   }}
                   className="flex-1 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl cursor-pointer transition-colors shadow-sm"
                 >
-                  Request Checkout
+                  Save Process & Request Checkout
                 </button>
               </div>
             </motion.div>

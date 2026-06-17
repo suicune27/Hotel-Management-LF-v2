@@ -26,7 +26,7 @@ interface GuestDashboardProps {
   bookingUid?: string | null;
 }
 
-type GuestTab = 'bookings' | 'profile' | 'menu' | 'chat' | 'extend_stay' | 'billing' | 'feedback';
+type GuestTab = 'bookings' | 'profile' | 'menu' | 'chat' | 'billing' | 'feedback';
 
 export default function GuestDashboard({ onNavigate, userSession, userProfile, onLogout, onProfileUpdate, roomNumber, bookingUid }: GuestDashboardProps) {
   const [activeTab, setActiveTab] = useState<GuestTab>('bookings');
@@ -87,14 +87,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestSelectedOutputDevice, setGuestSelectedOutputDevice] = useState('default');
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
-  // Stay extensions
+  // Stay extensions (kept for loading history)
   const [extensions, setExtensions] = useState<StayExtension[]>([]);
-  const [extendDate, setExtendDate] = useState('');
-  const [extendType, setExtendType] = useState<'day' | 'hour'>('day');
-  const [extendHours, setExtendHours] = useState(1);
-  const [extendReason, setExtendReason] = useState('');
-  const [extending, setExtending] = useState(false);
-  const [extendVerificationCode, setExtendVerificationCode] = useState('');
 
   // Chat sidebar toggle
   const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
@@ -1002,83 +996,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     setGuestCallDuration(0);
   };
 
-  // ===== STAY EXTENSION =====
-  const requestExtension = async () => {
-    if (!checkedInBooking) return;
-    if (extendType === 'day' && !extendDate) return;
-    if (extendType === 'hour' && (!extendHours || extendHours < 1)) return;
-    // Verify sharing code
-    const expectedCode = (checkedInBooking.sharing_code || '').toString().trim().toUpperCase();
-    const inputCode = extendVerificationCode.trim().toUpperCase();
-    if (expectedCode && inputCode !== expectedCode) {
-      setAlertState({ title: 'Verification Failed', message: 'The security code you entered does not match. Please check your Device Sharing Code in the Companion Access section.' });
-      return;
-    }
-    setExtending(true);
-    try {
-      const extPayload: any = {
-        booking_id: checkedInBooking.id,
-        extend_type: extendType,
-        reason: extendReason.trim() || 'Guest requested extension',
-        status: 'pending'
-      };
-      if (extendType === 'day') {
-        extPayload.requested_check_out_date = extendDate;
-        extPayload.requested_check_out_time = checkedInBooking.check_out_time || '11:00 AM';
-      } else {
-        // For hourly, store requested_hours and compute estimated date/time
-        extPayload.requested_hours = extendHours;
-        // Calculate new check-out date/time based on current check-out + hours
-        const timeStr = checkedInBooking.check_out_time || '12:00 PM';
-        const [hStr, modifier] = timeStr.split(' ');
-        let [h, m] = hStr.split(':').map(Number);
-        if (modifier === 'PM' && h < 12) h += 12;
-        if (modifier === 'AM' && h === 12) h = 0;
-        const currentOut = new Date(checkedInBooking.check_out_date);
-        currentOut.setHours(h, m, 0, 0);
-        const newOut = new Date(currentOut.getTime() + extendHours * 60 * 60 * 1000);
-        extPayload.requested_check_out_date = newOut.toISOString().split('T')[0];
-        // Store the computed time
-        const newH = newOut.getHours();
-        const newM = newOut.getMinutes();
-        const newMod = newH >= 12 ? 'PM' : 'AM';
-        const newH12 = newH % 12 || 12;
-        extPayload.requested_check_out_time = `${newH12}:${String(newM).padStart(2, '0')} ${newMod}`;
-      }
-      const { error } = await supabase.from('stay_extensions').insert(extPayload);
-      if (error) throw error;
-      // Send chat notification to front desk about this extension
-      try {
-        const extDesc = extendType === 'day'
-          ? `extend to ${extendDate}`
-          : `extend by ${extendHours} hour${extendHours > 1 ? 's' : ''}`;
-        await supabase.from('chat_messages').insert({
-          booking_id: checkedInBooking.id,
-          sender_id: chatSenderId,
-          sender_name: effectiveProfile.full_name || 'Guest',
-          sender_role: 'guest',
-          message: `🕐 Extension Request: ${extDesc}${extendReason.trim() ? ` — "${extendReason.trim()}"` : ''}`
-        });
-      } catch (chatErr) {
-        console.warn('Failed to send extension chat notification:', chatErr);
-      }
-      setExtendDate('');
-      setExtendHours(1);
-      setExtendReason('');
-      setExtendVerificationCode('');
-      setAlertState({ title: 'Extension Requested!', message: 'Your extension request has been sent to the front desk for approval.' });
-      const { data: extRes } = await supabase
-        .from('stay_extensions')
-        .select('*')
-        .eq('booking_id', checkedInBooking.id)
-        .order('created_at', { ascending: false });
-      if (extRes) setExtensions(extRes);
-    } catch (err: any) {
-      setAlertState({ title: 'Error', message: err.message });
-    } finally {
-      setExtending(false);
-    }
-  };
+  // ===== STAY EXTENSION (handled via chat — guest messages front desk) =====
 
   const isPastCheckIn = (() => {
     if (!checkedInBooking) return false;
@@ -1197,7 +1115,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       { id: 'menu', label: 'Order Food', icon: UtensilsCrossed },
       { id: 'billing', label: 'My Bill', icon: Receipt },
       { id: 'chat', label: 'Chat Front Desk', icon: MessageSquareText },
-      { id: 'extend_stay', label: 'Extend Stay', icon: Clock },
       { id: 'feedback', label: 'Feedback', icon: Star },
     );
   }
@@ -1661,24 +1578,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                             <p className="text-[11px] text-surface-400 mt-0.5 leading-relaxed">
                               Generate a temporary companion sharing code to authorize your spouse, friends, or other family devices to log into this Suite from their phones.
                             </p>
-                      </div>
-                      {/* Verification code input */}
-                      <div>
-                        <label className="block text-xs text-surface-500 font-medium mb-1.5">
-                          <Shield className="w-3 h-3 inline mr-1" />Device Sharing Code (Verification)
-                        </label>
-                        <input
-                          type="text"
-                          value={extendVerificationCode}
-                          onChange={(e) => setExtendVerificationCode(e.target.value)}
-                          placeholder={checkedInBooking?.sharing_code ? 'Enter your 5-digit sharing code' : 'No sharing code set — generate one in Companion Access'}
-                          disabled={!checkedInBooking?.sharing_code}
-                          className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs font-mono tracking-widest focus:outline-none focus:border-brand-500 disabled:opacity-50"
-                          maxLength={5}
-                        />
-                        <p className="text-[9px] text-surface-400 mt-1">Required for security — find your code in Companion Access Sharing</p>
-                      </div>
-                      <button
+                          </div>
+                          <button
                             onClick={handleGenerateSharingCode}
                             disabled={generatingCode}
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-lg text-xs cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-sm"
@@ -2148,13 +2049,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setActiveTab('extend_stay')}
-                          className="px-2.5 sm:px-3 py-1.5 bg-white hover:bg-surface-50 border border-surface-200 text-surface-700 rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
-                        >
-                          <Clock className="w-3 h-3 text-surface-500" /> Extend Stay
-                        </button>
-                        <button
-                          type="button"
                           onClick={callFrontDesk}
                           disabled={guestCallStatus !== 'idle'}
                           className="px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md disabled:opacity-50"
@@ -2265,162 +2159,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
 
               {/* ===== EXTEND STAY TAB ===== */}
-              {activeTab === 'extend_stay' && hasActiveStay && (
-                <div className="space-y-6 max-w-2xl mx-auto">
-                  <div>
-                    <h2 className="text-lg font-bold text-surface-900 tracking-tight">Extend Your Stay</h2>
-                    <p className="text-xs text-surface-400 mt-0.5">Request to extend your reservation beyond the original check-out date.</p>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-brand-50 via-white to-amber-50/40 border border-brand-100 rounded-2xl p-4 sm:p-6 shadow-sm relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-brand-100/20 rounded-full -mr-8 -mt-8 blur-xl" />
-                    <div className="relative flex items-center gap-3 sm:gap-4">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-brand-100 rounded-xl flex items-center justify-center border border-brand-200 shadow-sm">
-                        <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-brand-600" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[9px] sm:text-[10px] text-surface-500 font-bold uppercase tracking-wider">Current Check-Out</p>
-                        <p className="text-base sm:text-lg font-bold text-surface-900 truncate">{checkedInBooking?.check_out_date} at {checkedInBooking?.check_out_time}</p>
-                        <p className="text-[9px] sm:text-[10px] text-surface-400">{liveStayDuration ? `${liveStayDuration} remaining` : '—'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-2xl border border-surface-100 shadow-sm p-4 sm:p-6">
-                    <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-brand-600" /> Request Extension
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="flex bg-surface-100 rounded-lg p-1">
-                        <button
-                          type="button"
-                          onClick={() => setExtendType('day')}
-                          className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                            extendType === 'day'
-                              ? 'bg-white text-brand-700 shadow-sm'
-                              : 'text-surface-500 hover:text-surface-700'
-                          }`}
-                        >
-                          <Calendar className="w-3.5 h-3.5 inline mr-1" /> Per Day
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setExtendType('hour')}
-                          className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                            extendType === 'hour'
-                              ? 'bg-white text-brand-700 shadow-sm'
-                              : 'text-surface-500 hover:text-surface-700'
-                          }`}
-                        >
-                          <Clock className="w-3.5 h-3.5 inline mr-1" /> Per Hour
-                        </button>
-                      </div>
-
-                      {extendType === 'day' ? (
-                        <div>
-                          <label className="block text-xs text-surface-500 font-medium mb-1.5">New Check-Out Date</label>
-                          <input
-                            type="date"
-                            value={extendDate}
-                            onChange={(e) => setExtendDate(e.target.value)}
-                            min={checkedInBooking?.check_out_date || ''}
-                            className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
-                          />
-                        </div>
-                      ) : (
-                        <div>
-                          <label className="block text-xs text-surface-500 font-medium mb-1.5">Additional Hours</label>
-                          <div className="flex items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setExtendHours(Math.max(1, extendHours - 1))}
-                              className="p-2 bg-surface-100 hover:bg-surface-200 rounded-lg cursor-pointer transition-colors"
-                            >
-                              <Minus className="w-4 h-4 text-surface-600" />
-                            </button>
-                            <input
-                              type="number"
-                              value={extendHours}
-                              onChange={(e) => setExtendHours(Math.max(1, parseInt(e.target.value) || 1))}
-                              min={1}
-                              max={24}
-                              className="w-20 text-center bg-surface-50 border border-surface-200 rounded-xl px-3 py-2.5 text-sm font-bold text-surface-900 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setExtendHours(Math.min(24, extendHours + 1))}
-                              className="p-2 bg-surface-100 hover:bg-surface-200 rounded-lg cursor-pointer transition-colors"
-                            >
-                              <Plus className="w-4 h-4 text-surface-600" />
-                            </button>
-                            <span className="text-xs text-surface-500">hours</span>
-                          </div>
-                          {checkedInBooking && (
-                            <p className="text-[10px] text-brand-600 mt-2 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              Extended check-out: ~{(() => {
-                                const timeStr = checkedInBooking.check_out_time || '12:00 PM';
-                                const [time, ampm] = timeStr.split(' ');
-                                let [h, m] = time.split(':').map(Number);
-                                if (ampm === 'PM' && h !== 12) h += 12;
-                                if (ampm === 'AM' && h === 12) h = 0;
-                                const outDate = new Date(checkedInBooking.check_out_date);
-                                outDate.setHours(h + extendHours, m);
-                                return outDate.toLocaleDateString() + ' at ' + outDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                              })()}
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      <div>
-                        <label className="block text-xs text-surface-500 font-medium mb-1.5">Reason (optional)</label>
-                        <textarea
-                          value={extendReason}
-                          onChange={(e) => setExtendReason(e.target.value)}
-                          placeholder="Tell us why you'd like to extend your stay..."
-                          rows={3}
-                          className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 resize-none transition-all"
-                        />
-                      </div>
-                      <button
-                        onClick={requestExtension}
-                        disabled={(extendType === 'day' && !extendDate) || (extendType === 'hour' && (!extendHours || extendHours < 1)) || extending}
-                        className="w-full py-3 bg-brand-600 hover:bg-brand-700 disabled:bg-surface-200 text-white rounded-xl font-semibold text-xs cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all shadow-sm hover:shadow-md hover:shadow-brand-600/20"
-                      >
-                        {extending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
-                        <span>{extending ? 'Requesting...' : 'Submit Extension Request'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {extensions.length > 0 && (
-                    <div className="bg-white rounded-xl border border-surface-100 shadow-sm p-5">
-                      <h3 className="text-xs font-bold text-surface-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-brand-500" /> Extension History
-                      </h3>
-                      <div className="space-y-2">
-                        {extensions.map(ext => (
-                          <div key={ext.id} className="flex items-center justify-between py-2 border-b border-surface-50 last:border-0">
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-surface-800 truncate">Requested until {ext.requested_check_out_date}</p>
-                              {ext.reason && <p className="text-[10px] text-surface-400 truncate">{ext.reason}</p>}
-                              <p className="text-[10px] text-surface-400">{new Date(ext.created_at).toLocaleDateString()}</p>
-                            </div>
-                            <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded-full ml-2 whitespace-nowrap ${
-                              ext.status === 'approved' ? 'bg-emerald-50 text-emerald-700' :
-                              ext.status === 'rejected' ? 'bg-rose-50 text-rose-700' :
-                              'bg-amber-50 text-amber-700'
-                            }`}>
-                              {ext.status === 'approved' ? 'Approved' : ext.status === 'rejected' ? 'Rejected' : 'Pending'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* ===== PROFILE TAB ===== */}
               {activeTab === 'profile' && (

@@ -305,6 +305,7 @@ ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS min_stay_hours INTEGER NOT NUL
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS access_code TEXT;
 ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS extend_type TEXT NOT NULL DEFAULT 'day' CHECK (extend_type IN ('day', 'hour'));
 ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS requested_hours INTEGER;
+ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS requested_check_out_time TEXT;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS check_in_time TEXT NOT NULL DEFAULT '2:00 PM';
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS check_out_time TEXT NOT NULL DEFAULT '11:00 AM';
 

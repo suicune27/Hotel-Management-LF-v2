@@ -215,13 +215,14 @@ export interface StayExtension {
   id: string;
   booking_id: string;
   requested_check_out_date: string;
+  requested_check_out_time?: string;
   extend_type: 'day' | 'hour';
   requested_hours: number | null;
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   created_at: string;
   reviewed_by: string | null;
-  bookings?: Booking & { customers?: Customer; rooms?: Room }; // joined table
+  bookings?: Booking & { customers?: Customer; rooms?: Room };
 }
 
 export interface ContactMessage {

@@ -9,10 +9,10 @@ import { CallService } from '../lib/callService';
 import type { Call } from '../types';
 import { 
   Building, Calendar, User, LogOut, Home, Loader2, CalendarDays,
-  UtensilsCrossed, MessageSquareText, Bell, Clock, Plus, Minus,
+  UtensilsCrossed, MessageSquareText, Clock, Plus, Minus,
   Send, Phone, PhoneOff, Check, ShoppingCart, MapPin, Mail, X, CalendarPlus,
   Receipt, Star, DoorOpen, AlertTriangle, RefreshCw, CreditCard, FileText,
-  Mic, MicOff
+  Mic, MicOff, Shield, Trash2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -78,9 +78,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
   // Staff calls
   const [staffCalls, setStaffCalls] = useState<StaffCall[]>([]);
-  const [callReason, setCallReason] = useState('');
-  const [callingStaff, setCallingStaff] = useState(false);
-  const [showCallStaffModal, setShowCallStaffModal] = useState(false);
   const [guestCallStatus, setGuestCallStatus] = useState<'idle' | 'calling' | 'connected' | 'ended'>('idle');
   const [guestCallDuration, setGuestCallDuration] = useState(0);
   const [guestIsMuted, setGuestIsMuted] = useState(false);
@@ -97,6 +94,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [extendHours, setExtendHours] = useState(1);
   const [extendReason, setExtendReason] = useState('');
   const [extending, setExtending] = useState(false);
+  const [extendVerificationCode, setExtendVerificationCode] = useState('');
 
   // Chat sidebar toggle
   const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
@@ -860,43 +858,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   };
 
   // ===== STAFF CALLS =====
-  const callStaff = async () => {
-    if (!checkedInBooking) return;
-    setCallingStaff(true);
-    try {
-      const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
-      const { error } = await supabase.from('staff_calls').insert({
-        booking_id: checkedInBooking.id,
-        guest_id: isUuid(effectiveProfile.id) ? effectiveProfile.id : null,
-        guest_name: effectiveProfile.full_name || 'Guest',
-        reason: callReason.trim() || 'Guest needs assistance',
-        status: 'pending'
-      });
-      if (error) throw error;
-      await supabase.from('chat_messages').insert({
-        booking_id: checkedInBooking.id,
-        sender_id: chatSenderId,
-        sender_name: effectiveProfile.full_name || 'Guest',
-        sender_role: 'guest',
-        message: callReason.trim()
-          ? `📞 Staff Call: ${callReason.trim()}`
-          : `📞 Staff Call: Guest needs assistance`
-      });
-      setCallReason('');
-      setAlertState({ title: 'Staff Called!', message: 'A staff member will be with you shortly.' });
-      // Refresh calls
-      const { data: callsRes } = await supabase
-        .from('staff_calls')
-        .select('*')
-        .eq('booking_id', checkedInBooking.id)
-        .order('created_at', { ascending: false });
-      if (callsRes) setStaffCalls(callsRes);
-    } catch (err: any) {
-      setAlertState({ title: 'Error', message: err.message });
-    } finally {
-      setCallingStaff(false);
-    }
-  };
+  // (removed - call staff button removed per requirements)
 
   const callFrontDesk = async () => {
     console.log('[GuestCall] callFrontDesk started');
@@ -1045,6 +1007,13 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking) return;
     if (extendType === 'day' && !extendDate) return;
     if (extendType === 'hour' && (!extendHours || extendHours < 1)) return;
+    // Verify sharing code
+    const expectedCode = (checkedInBooking.sharing_code || '').toString().trim().toUpperCase();
+    const inputCode = extendVerificationCode.trim().toUpperCase();
+    if (expectedCode && inputCode !== expectedCode) {
+      setAlertState({ title: 'Verification Failed', message: 'The security code you entered does not match. Please check your Device Sharing Code in the Companion Access section.' });
+      return;
+    }
     setExtending(true);
     try {
       const extPayload: any = {
@@ -1055,8 +1024,9 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       };
       if (extendType === 'day') {
         extPayload.requested_check_out_date = extendDate;
+        extPayload.requested_check_out_time = checkedInBooking.check_out_time || '11:00 AM';
       } else {
-        // For hourly, store requested_hours and compute estimated date
+        // For hourly, store requested_hours and compute estimated date/time
         extPayload.requested_hours = extendHours;
         // Calculate new check-out date/time based on current check-out + hours
         const timeStr = checkedInBooking.check_out_time || '12:00 PM';
@@ -1068,6 +1038,12 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         currentOut.setHours(h, m, 0, 0);
         const newOut = new Date(currentOut.getTime() + extendHours * 60 * 60 * 1000);
         extPayload.requested_check_out_date = newOut.toISOString().split('T')[0];
+        // Store the computed time
+        const newH = newOut.getHours();
+        const newM = newOut.getMinutes();
+        const newMod = newH >= 12 ? 'PM' : 'AM';
+        const newH12 = newH % 12 || 12;
+        extPayload.requested_check_out_time = `${newH12}:${String(newM).padStart(2, '0')} ${newMod}`;
       }
       const { error } = await supabase.from('stay_extensions').insert(extPayload);
       if (error) throw error;
@@ -1089,6 +1065,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       setExtendDate('');
       setExtendHours(1);
       setExtendReason('');
+      setExtendVerificationCode('');
       setAlertState({ title: 'Extension Requested!', message: 'Your extension request has been sent to the front desk for approval.' });
       const { data: extRes } = await supabase
         .from('stay_extensions')
@@ -1615,9 +1592,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                           <button onClick={() => setActiveTab('chat')} className="px-3 sm:px-4 py-2 bg-white hover:bg-surface-50 border border-emerald-200 text-emerald-700 rounded-lg text-[10px] sm:text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all">
                             <MessageSquareText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Chat Desk
                           </button>
-                          <button onClick={() => setActiveTab('extend_stay')} className="px-3 sm:px-4 py-2 bg-white hover:bg-surface-50 border border-emerald-200 text-emerald-700 rounded-lg text-[10px] sm:text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all">
-                            <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Extend Stay
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -1687,8 +1661,24 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                             <p className="text-[11px] text-surface-400 mt-0.5 leading-relaxed">
                               Generate a temporary companion sharing code to authorize your spouse, friends, or other family devices to log into this Suite from their phones.
                             </p>
-                          </div>
-                          <button
+                      </div>
+                      {/* Verification code input */}
+                      <div>
+                        <label className="block text-xs text-surface-500 font-medium mb-1.5">
+                          <Shield className="w-3 h-3 inline mr-1" />Device Sharing Code (Verification)
+                        </label>
+                        <input
+                          type="text"
+                          value={extendVerificationCode}
+                          onChange={(e) => setExtendVerificationCode(e.target.value)}
+                          placeholder={checkedInBooking?.sharing_code ? 'Enter your 5-digit sharing code' : 'No sharing code set — generate one in Companion Access'}
+                          disabled={!checkedInBooking?.sharing_code}
+                          className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs font-mono tracking-widest focus:outline-none focus:border-brand-500 disabled:opacity-50"
+                          maxLength={5}
+                        />
+                        <p className="text-[9px] text-surface-400 mt-1">Required for security — find your code in Companion Access Sharing</p>
+                      </div>
+                      <button
                             onClick={handleGenerateSharingCode}
                             disabled={generatingCode}
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-lg text-xs cursor-pointer inline-flex items-center gap-1.5 transition-colors shadow-sm"
@@ -2121,6 +2111,29 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                           <span className="hidden sm:inline">{unreadChatCount} new</span>
                         </span>
                       )}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!checkedInBooking || !window.confirm('Archive this conversation? All messages will be permanently deleted.')) return;
+                          const msgs = chatMessages.filter((m) => m.booking_id === checkedInBooking.id);
+                          if (msgs.length === 0) return;
+                          try {
+                            await supabase.from('chat_bin').insert({
+                              booking_id: checkedInBooking.id,
+                              guest_name: effectiveProfile.full_name || 'Guest',
+                              room_number: checkedInBooking.rooms?.room_number || '',
+                              messages: JSON.parse(JSON.stringify(msgs)),
+                              deleted_by: null,
+                            });
+                            await supabase.from('chat_messages').delete().eq('booking_id', checkedInBooking.id);
+                            setChatMessages([]);
+                          } catch {}
+                        }}
+                        className="p-1.5 text-surface-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="Delete conversation"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
                     {/* Stay Services Quick Bar */}
@@ -2135,13 +2148,10 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setCallReason('');
-                            setShowCallStaffModal(true);
-                          }}
-                          className="px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
+                          onClick={() => setActiveTab('extend_stay')}
+                          className="px-2.5 sm:px-3 py-1.5 bg-white hover:bg-surface-50 border border-surface-200 text-surface-700 rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
                         >
-                          <Bell className="w-3 h-3 text-white" /> Call Staff
+                          <Clock className="w-3 h-3 text-surface-500" /> Extend Stay
                         </button>
                         <button
                           type="button"
@@ -2783,96 +2793,6 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         )}
       </AnimatePresence>
 
-      {/* Call Staff Assistance Modal */}
-      <AnimatePresence>
-        {showCallStaffModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowCallStaffModal(false)}
-              className="fixed inset-0 bg-surface-950/40 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white rounded-2xl border border-surface-200 max-w-md w-full p-6 shadow-xl relative z-10 space-y-4"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
-                  <span className="text-lg">🛎️</span>
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-surface-900 font-sans">Request Staff Support</h3>
-                  <p className="text-[10px] text-surface-400">Dispatch a hotel host to Suite {(checkedInBooking as any)?.rooms?.room_number || roomNumber || 'N/A'}</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-surface-500 uppercase tracking-wider mb-2">Select Quick Request Type</label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {['Extra Towels', 'Housekeeping Request', 'Maintenance Call', 'In-Suite Amenity', 'Tech Support', 'Other'].map(r => (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => setCallReason(r)}
-                        className={`px-2.5 py-1.5 text-[10px] sm:text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
-                          callReason === r
-                            ? 'bg-amber-500 border-amber-500 text-white shadow-sm'
-                            : 'bg-surface-50 border-surface-200 text-surface-700 hover:bg-surface-100 hover:border-surface-300'
-                        }`}
-                      >
-                        {r}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-bold text-surface-500 uppercase tracking-wider">Custom Assistance request / Detail</label>
-                  <input
-                    type="text"
-                    value={callReason}
-                    onChange={(e) => setCallReason(e.target.value)}
-                    placeholder="E.g., Please bring 2 wine glasses..."
-                    className="w-full bg-surface-50 border border-surface-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCallStaffModal(false)}
-                  className="flex-1 py-2 text-xs font-semibold hover:bg-surface-50 text-surface-605 border border-surface-200 rounded-xl cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const finalReason = callReason.trim() || 'General Desk Assistance';
-                    setShowCallStaffModal(false);
-                    // Set reason on component state and trigger staff call
-                    setCallReason(finalReason);
-                    // Give a tiny timeout so state registers before database insert
-                    setTimeout(async () => {
-                      await callStaff();
-                    }, 50);
-                  }}
-                  disabled={callingStaff}
-                  className="flex-1 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-xl cursor-pointer transition-colors shadow-sm disabled:bg-surface-200 disabled:cursor-not-allowed"
-                >
-                  {callingStaff ? 'Calling...' : 'Call Staff Now'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Audio element for remote call audio */}
       <audio ref={guestAudioRef} autoPlay />

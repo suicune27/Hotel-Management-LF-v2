@@ -29,7 +29,11 @@ export default function AdminStayExtensionsTab({
     try {
       await supabase.from('stay_extensions').update({ status: 'approved', reviewed_by: userProfile?.id }).eq('id', ext.id);
       if (ext.requested_check_out_date) {
-        await supabase.from('bookings').update({ check_out_date: ext.requested_check_out_date }).eq('id', ext.booking_id);
+        const update: any = { check_out_date: ext.requested_check_out_date };
+        if (ext.requested_check_out_time) {
+          update.check_out_time = ext.requested_check_out_time;
+        }
+        await supabase.from('bookings').update(update).eq('id', ext.booking_id);
       }
       addToast('success', 'Approved', 'Stay extension approved');
       await refreshTable('stay_extensions');

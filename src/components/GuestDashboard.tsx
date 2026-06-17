@@ -903,7 +903,8 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking || !effectiveProfile) { console.log('[GuestCall] no booking or profile'); return; }
     setGuestCallStatus('calling');
     try {
-      const svc = new CallService();
+      const turnServers = await CallService.loadTurnConfig();
+      const svc = turnServers.length > 0 ? new CallService(turnServers) : new CallService();
       svc.setLogTag('Guest');
       guestCallServiceRef.current = svc;
       console.log('[GuestCall] Requesting microphone...');
@@ -921,22 +922,32 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       if (!call) { console.log('[GuestCall] Failed to create call in DB'); setAlertState({ title: 'Call Failed', message: 'Could not connect to the front desk. Make sure the "calls" table has been created in your Supabase database.' }); setGuestCallStatus('idle'); return; }
       console.log('[GuestCall] Call created:', call.id, 'status:', call.status);
       let callTimer: ReturnType<typeof setInterval> | null = null;
+      let answerHandled = false;
       console.log('[GuestCall] Subscribing to signaling...');
       svc.subscribeToSignaling(call.id, effectiveProfile.id || '', async (signal) => {
         console.log('[GuestCall] Signal received:', signal.type);
         if (signal.type === 'answer') {
+          if (answerHandled) { console.log('[GuestCall] Answer already handled, skipping'); return; }
+          answerHandled = true;
           console.log('[GuestCall] Got answer signal, fetching answer_data from DB...');
           const fromDb = await CallService.getCall(call.id);
           if (fromDb?.answer_data) {
             console.log('[GuestCall] Answer data found, calling handleAnswer');
             await svc.handleAnswer(JSON.parse(fromDb.answer_data));
+            console.log('[GuestCall] Setting status to connected');
+            setGuestCallStatus('connected');
+            const start = Date.now();
+            callTimer = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+            if (pollTimer) clearInterval(pollTimer);
           } else {
             console.log('[GuestCall] No answer_data in DB yet');
           }
         }
         if (signal.type === 'declined' || signal.type === 'ended') {
           console.log('[GuestCall] Call ended/declined via signal');
+          answerHandled = true;
           setGuestCallStatus('ended');
+          if (callTimer) clearInterval(callTimer);
           svc.endCall();
         }
         if (signal.type === 'ice-candidate') {
@@ -957,13 +968,15 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       } else {
         console.log('[GuestCall] Failed to create offer!');
       }
-      // Poll for answer
+      // Poll for answer (fallback if signal is missed)
       console.log('[GuestCall] Starting poll for answer...');
       const pollTimer = setInterval(async () => {
+        if (answerHandled) { console.log('[GuestCall] Poll: answer already handled, stopping'); clearInterval(pollTimer); return; }
         const updated = await CallService.getCall(call.id);
         if (!updated) { console.log('[GuestCall] Poll: no DB record'); return; }
         console.log('[GuestCall] Poll: status=', updated.status, 'hasAnswer=', !!updated.answer_data);
         if (updated.status === 'connected' && updated.answer_data) {
+          answerHandled = true;
           console.log('[GuestCall] Poll: connected with answer! Calling handleAnswer...');
           await svc.handleAnswer(JSON.parse(updated.answer_data));
           console.log('[GuestCall] Setting status to connected');
@@ -973,6 +986,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           clearInterval(pollTimer);
         }
         if (updated.status === 'missed' || updated.status === 'ended') {
+          answerHandled = true;
           setGuestCallStatus('ended');
           if (callTimer) clearInterval(callTimer);
           clearInterval(pollTimer);

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Profile, PromoCode } from '../../types';
 import { X, Plus, Tag, Percent, DollarSign, Settings, Trash2, RefreshCw, ImageUp, Palette, Check } from 'lucide-react';
-import { getSettings, saveSettings, AppSettings, ColorScheme } from '../../lib/settings';
+import { getSettings, saveSettings, AppSettings, ColorScheme, saveTurnServers, loadTurnServers, type TurnServerEntry } from '../../lib/settings';
 import { fileToBase64, isValidImageType } from '../../lib/imageUpload';
 import type { ToastMessage } from '../Toast';
 
@@ -46,6 +46,13 @@ export default function AdminSettingsTab({
   const paymentOptions = settings.paymentOptions || [];
 
   const [activeSubTab, setActiveSubTab] = useState<'general' | 'brand' | 'theme' | 'promos' | 'system'>('general');
+
+  const [turnServers, setTurnServers] = useState<TurnServerEntry[]>([]);
+  const [turnSaving, setTurnSaving] = useState(false);
+
+  useEffect(() => {
+    import('../../lib/settings').then(m => m.loadTurnServers()).then(s => setTurnServers(s));
+  }, []);
 
   const [brandForm, setBrandForm] = useState({
     hotelName: settings.brand?.hotelName || '',
@@ -783,8 +790,80 @@ export default function AdminSettingsTab({
                                 className="flex-1 px-2 py-1.5 bg-surface-50 border border-surface-200 rounded-lg text-[9px] font-mono focus:outline-none focus:border-brand-500"
                                 placeholder={def}
                               />
-                            </div>
-                          </div>
+              </div>
+
+              {/* TURN Server Configuration */}
+              <div className="bg-white rounded-2xl border border-surface-100 shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-surface-100 bg-surface-50/50 flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-surface-500" />
+                  <h3 className="text-xs font-bold text-surface-800 uppercase tracking-wider">TURN Server Configuration</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  <p className="text-[10px] text-surface-400 leading-relaxed">
+                    TURN relays are required for calls between mobile (cellular data) and the hotel network.
+                    Add your TURN server credentials below. Leave empty to use STUN-only (PC-to-PC only).
+                  </p>
+                  {turnServers.map((srv, i) => (
+                    <div key={i} className="flex flex-col gap-2 p-3 bg-surface-50 rounded-xl border border-surface-200">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-surface-500 uppercase tracking-wider">Server {i + 1}</span>
+                        <button
+                          onClick={() => setTurnServers(p => p.filter((_, j) => j !== i))}
+                          className="p-1 text-rose-400 hover:text-rose-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={typeof srv.urls === 'string' ? srv.urls : (Array.isArray(srv.urls) ? srv.urls.join(', ') : '')}
+                        onChange={e => {
+                          const urls = e.target.value.split(',').map(u => u.trim()).filter(Boolean);
+                          setTurnServers(p => p.map((s, j) => j === i ? { ...s, urls: urls.length === 1 ? urls[0] : urls } : s));
+                        }}
+                        placeholder="turn:your-server.com:3478"
+                        className="w-full px-3 py-2 bg-white border border-surface-200 rounded-lg text-xs focus:outline-none focus:border-brand-500"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={srv.username || ''}
+                          onChange={e => setTurnServers(p => p.map((s, j) => j === i ? { ...s, username: e.target.value } : s))}
+                          placeholder="Username"
+                          className="w-full px-3 py-2 bg-white border border-surface-200 rounded-lg text-xs focus:outline-none focus:border-brand-500"
+                        />
+                        <input
+                          type="password"
+                          value={srv.credential || ''}
+                          onChange={e => setTurnServers(p => p.map((s, j) => j === i ? { ...s, credential: e.target.value } : s))}
+                          placeholder="Credential"
+                          className="w-full px-3 py-2 bg-white border border-surface-200 rounded-lg text-xs focus:outline-none focus:border-brand-500"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setTurnServers(p => [...p, { urls: 'turn:your-server.com:3478', username: '', credential: '' }])}
+                      className="px-3 py-2 text-[10px] font-bold text-brand-600 bg-brand-50 hover:bg-brand-100 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" /> Add Server
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setTurnSaving(true);
+                        await saveTurnServers(turnServers);
+                        setTurnSaving(false);
+                      }}
+                      disabled={turnSaving}
+                      className="px-4 py-2 text-[10px] font-bold text-white bg-surface-800 hover:bg-surface-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {turnSaving ? 'Saving...' : 'Save TURN Config'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
                         );
                       })}
                     </div>

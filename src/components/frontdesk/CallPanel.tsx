@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Mic, MicOff, Volume2, VolumeX, Pause, Play, X, Loader2, Clock, User, AlertTriangle, Volume } from 'lucide-react';
-import { CallService } from '../../lib/callService';
+import { CallService, type IceServerConfig } from '../../lib/callService';
 import { supabase } from '../../lib/supabase';
 import type { Call } from '../../types';
 
@@ -29,9 +29,25 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string>('default');
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const callSvc = useRef(new CallService());
+  const callSvc = useRef<CallService | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [showOutputPicker, setShowOutputPicker] = useState(false);
+  const turnServersRef = useRef<IceServerConfig[]>([]);
+
+  // Load TURN server config from hotel_settings
+  useEffect(() => {
+    CallService.loadTurnConfig().then((servers) => {
+      turnServersRef.current = servers;
+    });
+  }, []);
+
+  const getCallService = useCallback(() => {
+    if (!callSvc.current) {
+      const servers = turnServersRef.current;
+      callSvc.current = servers.length > 0 ? new CallService(servers) : new CallService();
+    }
+    return callSvc.current;
+  }, []);
 
   // Enumerate audio output devices
   useEffect(() => {
@@ -87,7 +103,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   }, [activeCall?.status, activeCall?.start_time]);
 
   useEffect(() => {
-    const stream = callSvc.current.remoteStream;
+    const stream = callSvc.current?.remoteStream;
     const el = audioRef.current;
     console.log('[CallPanel] Remote stream effect: stream=', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el=', !!el, 'alreadySet=', el?.srcObject === stream);
     if (stream && el && el.srcObject !== stream) {
@@ -121,13 +137,15 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
     if (!incomingCall) return;
     setCallError(null);
     try {
-      const micOk = await callSvc.current.requestMicrophone();
+      const svc = getCallService();
+      const micOk = await svc.requestMicrophone();
       if (!micOk) { setCallError('Microphone access denied'); return; }
 
-      callSvc.current.subscribeToSignaling(incomingCall.id, userProfileId, async (signal) => {
-        if (signal.type === 'ice-candidate') callSvc.current.queueIceCandidate(signal.data);
+      svc.subscribeToSignaling(incomingCall.id, userProfileId, async (signal) => {
+        if (signal.type === 'ice-candidate') svc.queueIceCandidate(signal.data);
         if (signal.type === 'ended') {
-          callSvc.current.endCall();
+          svc.endCall();
+          callSvc.current = null;
           setActiveCall(null);
           setCallDuration(0);
           loadHistory();
@@ -140,7 +158,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
       let offer: any;
       try { offer = JSON.parse(fromDb.offer_data); } catch { setCallError('Invalid offer data from guest'); return; }
 
-      const answer = await callSvc.current.handleOffer(offer);
+      const answer = await svc.handleOffer(offer);
       if (!answer) { setCallError('Failed to create WebRTC answer'); return; }
 
       const startTime = new Date().toISOString();
@@ -150,7 +168,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
       });
       if (!updateOk) { setCallError('Failed to save call to database - check RLS policies'); return; }
 
-      callSvc.current.broadcastSignal('answer');
+      svc.broadcastSignal('answer');
       const roomInfo = incomingCall.room_number ? ` (Room ${incomingCall.room_number})` : '';
       insertCallChatMessage(incomingCall, `📞 Call connected${roomInfo}`);
 
@@ -166,10 +184,11 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const handleDecline = useCallback(async () => {
     if (!incomingCall) return;
     setCallError(null);
-    callSvc.current.subscribeToSignaling(incomingCall.id, userProfileId, () => {});
+    const svc = getCallService();
+    svc.subscribeToSignaling(incomingCall.id, userProfileId, () => {});
     try {
       await CallService.updateCall(incomingCall.id, { status: 'missed', end_time: new Date().toISOString() });
-      callSvc.current.broadcastSignal('declined');
+      svc.broadcastSignal('declined');
       const roomInfo = incomingCall.room_number ? ` (Room ${incomingCall.room_number})` : '';
       insertCallChatMessage(incomingCall, `📞 Missed call${roomInfo}`);
     } catch {}
@@ -190,8 +209,9 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
         const roomInfo = target.room_number ? ` (Room ${target.room_number})` : '';
         insertCallChatMessage(target, `📞 Call ended — ${mins}:${secs.toString().padStart(2, '0')}${roomInfo}`);
       }
-      callSvc.current.broadcastSignal('ended');
-      callSvc.current.endCall();
+      callSvc.current?.broadcastSignal('ended');
+      callSvc.current?.endCall();
+      callSvc.current = null;
     } catch {}
     setActiveCall(null);
     setIncomingCall(null);
@@ -200,7 +220,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   }, [activeCall, incomingCall]);
 
   const handleToggleMute = useCallback(() => {
-    setIsMuted(callSvc.current.toggleMute());
+    setIsMuted(callSvc.current?.toggleMute() ?? false);
   }, []);
 
   const handleHold = useCallback(async () => {

@@ -556,6 +556,10 @@ INSERT INTO public.hotel_settings (key, value, updated_at)
 SELECT 'resort_settings', '{"layoutCategories":["Standard Room","Deluxe Room","Grand Suite","Presidential Penthouse"],"currencyCode":"PHP","currencySymbol":"₱","minStayHours":3,"checkInTimes":["2:00 PM","3:00 PM","4:00 PM"],"checkOutTimes":["10:00 AM","11:00 AM","12:00 PM"],"announcement":{"text":"","enabled":false,"type":"promo"},"brand":{"hotelName":"Grand Horizon Hotel","hotelSubtitle":"Resort Concierge","logoUrl":"","brandColor":"#7c3aed","faviconUrl":""},"theme":"light"}'::jsonb, now()
 WHERE NOT EXISTS (SELECT 1 FROM public.hotel_settings WHERE key = 'resort_settings');
 
+INSERT INTO public.hotel_settings (key, value, updated_at)
+SELECT 'turn_servers', '[]'::jsonb, now()
+WHERE NOT EXISTS (SELECT 1 FROM public.hotel_settings WHERE key = 'turn_servers');
+
 INSERT INTO public.testimonials (customer_name, role_or_title, comment, rating, avatar_url)
 SELECT * FROM (VALUES
   ('Isabella Rossi', 'Frequent Luxury Traveler', 'The cliffside infinity pool at sunrise was nothing short of magical. Every detail from the lemon-scented linens to the private catamaran excursion was flawless.', 5, 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&h=80&w=80&q=80'),

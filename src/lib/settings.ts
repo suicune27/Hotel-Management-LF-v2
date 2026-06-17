@@ -158,3 +158,34 @@ export function hexToRgb(hex: string): string {
   if (!result) return '124 58 237';
   return `${parseInt(result[1], 16)} ${parseInt(result[2], 16)} ${parseInt(result[3], 16)}`;
 }
+
+export interface TurnServerEntry {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export async function saveTurnServers(servers: TurnServerEntry[]): Promise<void> {
+  const { error } = await supabase
+    .from('hotel_settings')
+    .upsert({
+      key: 'turn_servers',
+      value: servers,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'key' });
+  if (error) console.warn('Failed to save TURN servers:', error.message);
+}
+
+export async function loadTurnServers(): Promise<TurnServerEntry[]> {
+  try {
+    const { data } = await supabase
+      .from('hotel_settings')
+      .select('value')
+      .eq('key', 'turn_servers')
+      .maybeSingle();
+    if (data?.value && Array.isArray(data.value)) return data.value as TurnServerEntry[];
+  } catch (e) {
+    console.error('Failed to load TURN servers:', e);
+  }
+  return [];
+}

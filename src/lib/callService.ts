@@ -1,12 +1,19 @@
 import { supabase } from './supabase';
 import type { Call } from '../types';
 
-const STUN_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
+export interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+const DEFAULT_ICE_SERVERS: IceServerConfig[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+];
 
 export interface CallSignal {
   type: 'offer' | 'answer' | 'ice-candidate';
@@ -25,6 +32,11 @@ export class CallService {
   private pendingCandidates: RTCIceCandidateInit[] = [];
   private remoteDescSet = false;
   private logTag = '';
+  private iceServers: IceServerConfig[];
+
+  constructor(iceServers?: IceServerConfig[]) {
+    this.iceServers = iceServers && iceServers.length > 0 ? iceServers : DEFAULT_ICE_SERVERS;
+  }
 
   private log(...args: any[]) {
     console.log(`[CallService${this.logTag}]`, ...args);
@@ -33,7 +45,13 @@ export class CallService {
   async requestMicrophone(): Promise<boolean> {
     try {
       this.log('Requesting microphone...');
-      this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       const tracks = this.localStream.getAudioTracks();
       this.log('Microphone granted, tracks:', tracks.length, 'enabled:', tracks.map(t => `${t.label}:${t.enabled}`));
       return true;
@@ -46,8 +64,8 @@ export class CallService {
   setLogTag(tag: string) { this.logTag = `[${tag}]`; }
 
   private createPC() {
-    this.log('Creating RTCPeerConnection...');
-    this.pc = new RTCPeerConnection(STUN_SERVERS);
+    this.log('Creating RTCPeerConnection with', this.iceServers.length, 'ICE servers...');
+    this.pc = new RTCPeerConnection({ iceServers: this.iceServers as RTCIceServer[] });
     if (this.localStream) {
       const tracks = this.localStream.getTracks();
       this.log('Adding', tracks.length, 'local tracks to PC');
@@ -122,6 +140,10 @@ export class CallService {
 
   async handleAnswer(answer: any) {
     if (!this.pc) { this.log('handleAnswer FAILED: no PC'); return; }
+    if (this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'have-local-offer') {
+      this.log('handleAnswer SKIPPED: signalingState is', this.pc.signalingState);
+      return;
+    }
     try {
       this.log('handleAnswer() - setting remote description');
       await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -180,7 +202,7 @@ export class CallService {
 
   get currentCallIdVal(): string | null { return this.currentCallId; }
 
-  // Broadcast-based call announcement — subscribe early and use httpSend for reliability
+  // Broadcast-based call announcement
   private static announceChannel = supabase.channel('calls:announce');
   private static announceReady = false;
 
@@ -198,6 +220,23 @@ export class CallService {
   static listenForNewCalls(onCallId: (callId: string) => void) {
     CallService.initAnnounce();
     CallService.announceChannel.on('broadcast', { event: 'new_call' }, (p) => onCallId(p.payload.call_id));
+  }
+
+  static async loadTurnConfig(): Promise<IceServerConfig[]> {
+    try {
+      const { data } = await supabase
+        .from('hotel_settings')
+        .select('value')
+        .eq('key', 'turn_servers')
+        .maybeSingle();
+      if (data?.value && Array.isArray(data.value) && data.value.length > 0) {
+        console.log('[CallService] Loaded TURN config:', data.value.length, 'servers');
+        return data.value as IceServerConfig[];
+      }
+    } catch (err) {
+      console.error('[CallService] Failed to load TURN config:', err);
+    }
+    return [];
   }
 
   // DB helpers

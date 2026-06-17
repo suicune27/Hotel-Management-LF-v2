@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Mic, MicOff, Volume2, VolumeX, Pause, Play, X, Loader2, Clock, User, AlertTriangle, Volume } from 'lucide-react';
+import { Phone, PhoneOff, PhoneIncoming, PhoneOutgoing, Mic, MicOff, Volume2, VolumeX, Pause, Play, X, Loader2, Clock, User, AlertTriangle, Volume, Wifi, WifiOff, Settings } from 'lucide-react';
 import { CallService, type IceServerConfig } from '../../lib/callService';
 import { supabase } from '../../lib/supabase';
 import type { Call } from '../../types';
+import { getCallClient, type CallServerClient, type ClientRole } from '../../lib/callServerClient';
+import type { CallSignal } from '../../lib/callService';
 
 interface MediaDeviceInfo {
   deviceId: string;
@@ -32,7 +34,11 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const callSvc = useRef<CallService | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [showOutputPicker, setShowOutputPicker] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [wsServerUrl, setWsServerUrl] = useState('');
+  const [showWsConfig, setShowWsConfig] = useState(false);
   const turnServersRef = useRef<IceServerConfig[]>([]);
+  const wsClientRef = useRef<CallServerClient | null>(null);
 
   // Load TURN server config from hotel_settings
   useEffect(() => {
@@ -73,14 +79,88 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
     }
   }, [selectedOutputDevice]);
 
-  // Init announce channel early
-  useEffect(() => { console.log('[CallPanel] Mounting'); CallService.initAnnounce(); }, []);
-
+  // Connect to WebSocket signaling server
   useEffect(() => {
-    console.log('[CallPanel] Init effect with profile:', userProfileId);
+    const savedUrl = localStorage.getItem('call_server_url') || `ws://${window.location.hostname}:3001`;
+    setWsServerUrl(savedUrl);
+
+    const client = getCallClient(savedUrl);
+    wsClientRef.current = client;
+
+    client.on({
+      onStatusChange: (connected) => {
+        setWsConnected(connected);
+      },
+      onIncomingCall: (callId, guestName, roomNumber, bookingId) => {
+        // Create a Call-like object from the WS announcement
+        setIncomingCall({
+          id: callId,
+          booking_id: bookingId || null,
+          caller_id: null,
+          caller_name: guestName,
+          caller_role: 'guest',
+          room_number: roomNumber || null,
+          receiver_id: null,
+          receiver_name: null,
+          department: null,
+          status: 'ringing',
+          queue_position: null,
+          offer_data: null,
+          answer_data: null,
+          start_time: null,
+          end_time: null,
+          duration_seconds: null,
+          created_at: new Date().toISOString(),
+        } as Call);
+        setShowPanel(true);
+        setCallError(null);
+      },
+      onCallEnded: (callId) => {
+        setActiveCall(null);
+        setIncomingCall(null);
+        setCallDuration(0);
+        callSvc.current?.endCall();
+        callSvc.current = null;
+        loadHistory();
+      },
+      onCallDeclined: (callId) => {
+        setIncomingCall(null);
+      },
+      onFrontDeskOffline: () => {
+        setCallError('Call server disconnected');
+      },
+      onSignal: (callId, from, signal) => {
+        const svc = callSvc.current;
+        if (!svc) return;
+        svc.dispatchSignal({
+          type: signal.type as any,
+          call_id: callId,
+          from: from,
+          to: userProfileId,
+          data: signal.data,
+        });
+      },
+      onCallAccepted: (callId) => {
+        // Already handled in accept flow
+      },
+    });
+
+    client.connect('frontdesk', userProfileName || 'Front Desk');
+
+    return () => {
+      // Don't disconnect on unmount - keep the singleton alive
+    };
+  }, [userProfileName]);
+
+  // Fall back to Supabase if WebSocket is not available
+  useEffect(() => {
+    if (wsConnected) return; // Skip Supabase announce if WS is connected
+
+    console.log('[CallPanel] WS not connected, falling back to Supabase signaling');
+    CallService.initAnnounce();
     loadHistory();
     CallService.listenForNewCalls(async (callId) => {
-      console.log('[CallPanel] New call announced:', callId);
+      console.log('[CallPanel] New call announced (Supabase):', callId);
       const call = await CallService.getCall(callId);
       if (!call) return;
       if (call.receiver_id && call.receiver_id !== userProfileId) return;
@@ -91,7 +171,11 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
         setCallError(null);
       }
     });
-  }, [userProfileId]);
+
+    return () => {
+      // cleanup is handled by CallService
+    };
+  }, [wsConnected, userProfileId]);
 
   useEffect(() => {
     if (activeCall?.status === 'connected' && activeCall?.start_time) {
@@ -103,17 +187,21 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   }, [activeCall?.status, activeCall?.start_time]);
 
   useEffect(() => {
-    const stream = callSvc.current?.remoteStream;
+    if (activeCall?.status !== 'connected') return;
     const el = audioRef.current;
-    console.log('[CallPanel] Remote stream effect: stream=', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el=', !!el, 'alreadySet=', el?.srcObject === stream);
-    if (stream && el && el.srcObject !== stream) {
-      console.log('[CallPanel] Connecting remote stream to audio element!');
-      el.srcObject = stream;
-      el.volume = 1;
-      el.muted = false;
-      el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
-    }
-  });
+    const check = setInterval(() => {
+      const stream = callSvc.current?.remoteStream;
+      if (stream && el && el.srcObject !== stream) {
+        console.log('[CallPanel] Connecting remote stream to audio element!');
+        el.srcObject = stream;
+        el.volume = 1;
+        el.muted = false;
+        el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
+        clearInterval(check);
+      }
+    }, 200);
+    return () => clearInterval(check);
+  }, [activeCall?.status]);
 
   const loadHistory = async () => {
     const h = await CallService.getCallHistory();
@@ -141,6 +229,68 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
       const micOk = await svc.requestMicrophone();
       if (!micOk) { setCallError('Microphone access denied'); return; }
 
+      // WS path: use WebSocket signaling instead of Supabase
+      const wsClient = wsClientRef.current;
+      if (wsConnected && wsClient) {
+        const callId = incomingCall.id;
+
+        svc.setSignalTransport(
+          async (signal: CallSignal) => {
+            if (signal.type === 'offer') {
+              try {
+                const answer = await svc.handleOffer(signal.data);
+                if (answer) {
+                  wsClient.sendSignal(callId, { type: 'answer', data: answer });
+
+                  // Re-set transport for ICE candidates only
+                  svc.setSignalTransport(
+                    (sig) => {
+                      if (sig.type === 'ice-candidate') svc.queueIceCandidate(sig.data);
+                      if (sig.type === 'ended') {
+                        svc.endCall();
+                        callSvc.current = null;
+                        setActiveCall(null);
+                        setCallDuration(0);
+                        loadHistory();
+                      }
+                    },
+                    (type, data) => {
+                      if (type === 'ice-candidate') wsClient.sendSignal(callId, { type: 'ice-candidate', data });
+                    }
+                  );
+
+                  const startTime = new Date().toISOString();
+                  const roomInfo = incomingCall.room_number ? ` (Room ${incomingCall.room_number})` : '';
+                  insertCallChatMessage(incomingCall, `📞 Call connected${roomInfo}`);
+                  setActiveCall({ ...incomingCall, status: 'connected', receiver_id: userProfileId, receiver_name: userProfileName, start_time: startTime });
+                  setIncomingCall(null);
+                  loadHistory();
+                }
+              } catch (err: any) {
+                console.error('[CallPanel] WS offer handling error:', err);
+                setCallError(err?.message || 'Failed to handle offer');
+              }
+            } else if (signal.type === 'ice-candidate') {
+              svc.queueIceCandidate(signal.data);
+            } else if (signal.type === 'ended') {
+              svc.endCall();
+              callSvc.current = null;
+              setActiveCall(null);
+              setCallDuration(0);
+              loadHistory();
+            }
+          },
+          (type, data) => {
+            if (type === 'ice-candidate') wsClient.sendSignal(callId, { type: 'ice-candidate', data });
+          }
+        );
+
+        svc.subscribeToSignaling(callId, userProfileId, () => {});
+        wsClient.acceptCall(callId);
+        return;
+      }
+
+      // Supabase path (fallback)
       svc.subscribeToSignaling(incomingCall.id, userProfileId, async (signal) => {
         if (signal.type === 'ice-candidate') svc.queueIceCandidate(signal.data);
         if (signal.type === 'ended') {
@@ -184,6 +334,16 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const handleDecline = useCallback(async () => {
     if (!incomingCall) return;
     setCallError(null);
+
+    // WS path
+    if (wsConnected && wsClientRef.current) {
+      wsClientRef.current.declineCall(incomingCall.id);
+      setIncomingCall(null);
+      loadHistory();
+      return;
+    }
+
+    // Supabase path
     const svc = getCallService();
     svc.subscribeToSignaling(incomingCall.id, userProfileId, () => {});
     try {
@@ -200,6 +360,20 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
     if (!activeCall && !incomingCall) return;
     const target = activeCall || incomingCall;
     if (!target) return;
+
+    // WS path
+    if (wsConnected && wsClientRef.current) {
+      wsClientRef.current.endCall();
+      callSvc.current?.endCall();
+      callSvc.current = null;
+      setActiveCall(null);
+      setIncomingCall(null);
+      setCallDuration(0);
+      loadHistory();
+      return;
+    }
+
+    // Supabase path
     const duration = activeCall?.start_time ? Math.floor((Date.now() - new Date(activeCall.start_time).getTime()) / 1000) : 0;
     try {
       await CallService.updateCall(target.id, { status: 'ended', end_time: new Date().toISOString(), duration_seconds: duration });
@@ -238,16 +412,68 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
 
   return (
     <>
-      <audio ref={audioRef} autoPlay />
-      <button onClick={() => setShowPanel(!showPanel)}
-        className={`fixed bottom-6 right-6 z-[200] w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all cursor-pointer ${incomingCall ? 'bg-rose-600 animate-pulse' : activeCall ? 'bg-emerald-600' : 'bg-brand-600'}`}>
-        {incomingCall ? <PhoneIncoming className="w-6 h-6 text-white" /> : <Phone className="w-6 h-6 text-white" />}
-      </button>
+      <audio ref={audioRef} autoPlay playsInline />
+      {/* Floating call button with WS status dot */}
+      <div className="fixed bottom-6 right-6 z-[200]">
+        {/* WS connection dot on the outside */}
+        <div
+          onClick={() => setShowWsConfig(!showWsConfig)}
+          className="absolute -top-1 -left-1 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer z-10 shadow-sm border-2 border-white transition-colors"
+          title={wsConnected ? 'Call server connected' : 'Call server offline — using Supabase fallback'}
+          style={{ backgroundColor: wsConnected ? '#059669' : '#dc2626' }}
+        >
+          {wsConnected ? <Wifi className="w-2.5 h-2.5 text-white" /> : <WifiOff className="w-2.5 h-2.5 text-white" />}
+        </div>
+        <button onClick={() => setShowPanel(!showPanel)}
+          className={`w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all cursor-pointer ${incomingCall ? 'bg-rose-600 animate-pulse' : activeCall ? 'bg-emerald-600' : 'bg-brand-600'}`}>
+          {incomingCall ? <PhoneIncoming className="w-6 h-6 text-white" /> : <Phone className="w-6 h-6 text-white" />}
+        </button>
+
+        {/* WS config tooltip */}
+        {showWsConfig && (
+          <div className="absolute bottom-full mb-2 right-0 w-72 bg-white border border-surface-200 rounded-xl shadow-xl p-3 z-30" onClick={(e) => e.stopPropagation()}>
+            <p className="text-[10px] font-bold text-surface-500 uppercase tracking-wider mb-2">Call Server</p>
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              <span className="text-xs font-semibold text-surface-800">
+                {wsConnected ? 'Connected' : 'Disconnected'}
+              </span>
+              {!wsConnected && (
+                <span className="text-[9px] text-amber-600 font-medium ml-auto">Fallback: Supabase</span>
+              )}
+            </div>
+            <div className="bg-surface-50 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-surface-500 truncate">
+              {wsServerUrl}
+            </div>
+            <button
+              onClick={() => {
+                const url = prompt('Enter WebSocket server URL:', wsServerUrl);
+                if (url && url.trim()) {
+                  localStorage.setItem('call_server_url', url.trim());
+                  window.location.reload();
+                }
+                setShowWsConfig(false);
+              }}
+              className="mt-2 w-full py-1.5 bg-surface-100 hover:bg-surface-200 text-surface-700 text-[10px] font-semibold rounded-lg cursor-pointer transition-colors"
+            >
+              Change Server URL
+            </button>
+          </div>
+        )}
+      </div>
 
       {show && (
         <div className="fixed bottom-24 right-6 z-[200] w-80 bg-white rounded-2xl shadow-2xl border border-surface-100 overflow-hidden animate-scale-in">
           <div className="px-4 py-3 bg-brand-600 text-white flex items-center justify-between">
-            <div className="flex items-center gap-2"><Phone className="w-4 h-4" /><span className="text-xs font-bold">Calls</span></div>
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4" />
+              <span className="text-xs font-bold">Calls</span>
+              {/* WS status badge in header */}
+              <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold ${wsConnected ? 'bg-emerald-500/30 text-emerald-100' : 'bg-amber-500/30 text-amber-100'}`}>
+                {wsConnected ? <Wifi className="w-2.5 h-2.5" /> : <WifiOff className="w-2.5 h-2.5" />}
+                {wsConnected ? 'WS' : 'Supabase'}
+              </div>
+            </div>
             <button onClick={() => { setShowPanel(false); }} className="p-1 hover:bg-white/20 rounded cursor-pointer"><X className="w-3.5 h-3.5" /></button>
           </div>
 

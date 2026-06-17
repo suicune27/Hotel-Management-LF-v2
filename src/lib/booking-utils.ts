@@ -23,7 +23,9 @@ export const EXTEND_PRESETS: DurationPreset[] = [
 ];
 
 export function combineDateAndTime(isoDate: string, time12: string): Date {
-  return new Date(`${toIso(isoDate)}T${to24h(time12)}`);
+  const [year, month, day] = toIso(isoDate).split('-').map(Number);
+  const [hours, minutes] = to24h(time12).split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
 }
 
 export function hoursBetween(ciDate: string, ciTime: string, coDate: string, coTime: string): number {

@@ -18,9 +18,15 @@ export const ORDER_STATUS_FLOW: Record<string, string[]> = {
   cancelled: [],
 };
 
+const combineDateAndTime = (date: string, time: string) => {
+  const [year, month, day] = toIso(date).split('-').map(Number);
+  const [hours, minutes] = to24h(time).split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+};
+
 export const diffHours = (ciDate: string, ciTime: string, coDate: string, coTime: string): number => {
-  const from = new Date(`${toIso(ciDate)}T${to24h(ciTime)}`);
-  const to = new Date(`${toIso(coDate)}T${to24h(coTime)}`);
+  const from = combineDateAndTime(ciDate, ciTime);
+  const to = combineDateAndTime(coDate, coTime);
   const ms = to.getTime() - from.getTime();
   let hours = ms / (1000 * 60 * 60);
   if (hours <= 0) hours += 24;
@@ -73,8 +79,8 @@ export const to12h = (t: string) => {
 /** Formats a date string to locale date. If the date has no timezone info and
  *  the given time crosses midnight (time < ciTime on same date), bump by 1 day. */
 export const displayDate = (date: string, time: string, ciDate: string, ciTime: string) => {
-  const d = new Date(`${toIso(date)}T${to24h(time)}`);
-  const ci = new Date(`${toIso(ciDate)}T${to24h(ciTime)}`);
+  const d = combineDateAndTime(date, time);
+  const ci = combineDateAndTime(ciDate, ciTime);
   if (d <= ci) d.setDate(d.getDate() + 1);
   return d.toLocaleDateString();
 };
@@ -126,7 +132,10 @@ export const snapToNearest = (minutes: number, options: number[]) => {
   return options.reduce((prev, curr) => Math.abs(curr - minutes) < Math.abs(prev - minutes) ? curr : prev);
 };
 
-export const dt = (date: string, time: string) => `${toIso(date)}T${to24h(time)}`;
+export const dt = (date: string, time: string) => {
+  const d = combineDateAndTime(date, time);
+  return d.toISOString();
+};
 
 export interface InvoiceData {
   booking: Booking;

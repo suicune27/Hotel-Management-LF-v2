@@ -35,6 +35,8 @@ export class CallService {
   private remoteDescSet = false;
   private logTag = '';
   private iceServers: IceServerConfig[];
+  private signalHandler: ((signal: CallSignal) => void) | null = null;
+  private signalBroadcaster: ((type: CallSignalType, data?: any) => void) | null = null;
 
   constructor(iceServers?: IceServerConfig[]) {
     this.iceServers = iceServers && iceServers.length > 0 ? iceServers : DEFAULT_ICE_SERVERS;
@@ -47,14 +49,28 @@ export class CallService {
   async requestMicrophone(): Promise<boolean> {
     try {
       this.log('Requesting microphone...');
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      try {
+        // First try with detailed audio constraints (channelCount:1 may fail on older mobile browsers)
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+      } catch (detailedErr) {
+        // Fallback: simpler constraints for mobile compatibility
+        this.log('Detailed constraints failed, retrying with basic audio...', detailedErr);
+        this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       const tracks = this.localStream.getAudioTracks();
+      tracks.forEach((track) => {
+        track.enabled = true;
+        if ('contentHint' in track) {
+          (track as MediaStreamTrack & { contentHint?: string }).contentHint = 'speech';
+        }
+      });
       this.log('Microphone granted, tracks:', tracks.length, 'enabled:', tracks.map(t => `${t.label}:${t.enabled}`));
       return true;
     } catch (err) {
@@ -64,6 +80,24 @@ export class CallService {
   }
 
   setLogTag(tag: string) { this.logTag = `[${tag}]`; }
+
+  /**
+   * Set a custom signaling transport (e.g., WebSocket) instead of Supabase broadcast.
+   * @param onSignal - Called when a signal is received from the remote peer
+   * @param sendSignal - Called to send a signal to the remote peer
+   */
+  setSignalTransport(
+    onSignal: (signal: CallSignal) => void,
+    sendSignal: (type: CallSignalType, data?: any) => void,
+  ) {
+    this.signalHandler = onSignal;
+    this.signalBroadcaster = sendSignal;
+  }
+
+  /** Dispatch an incoming signal to the handler */
+  dispatchSignal(signal: CallSignal) {
+    this.signalHandler?.(signal);
+  }
 
   private createPC() {
     this.log('Creating RTCPeerConnection with', this.iceServers.length, 'ICE servers...');
@@ -76,14 +110,22 @@ export class CallService {
       this.log('WARN: No local stream to add to PC');
     }
     this.pc.ontrack = (e) => {
-      this.log('ontrack FIRED! streams:', e.streams.length, 'track kind:', e.track?.kind);
-      this.remoteStream = e.streams[0];
-      this.log('remoteStream set:', !!this.remoteStream);
+      const stream = e.streams?.[0] || new MediaStream();
+      if (e.track && !stream.getTracks().some((t) => t.id === e.track!.id)) {
+        stream.addTrack(e.track);
+      }
+      this.remoteStream = stream;
+      this.log('ontrack FIRED! streams:', e.streams.length, 'track kind:', e.track?.kind, 'remoteStreamTracks:', this.remoteStream.getTracks().length);
     };
     this.pc.onicecandidate = (e) => {
       if (e.candidate && this.currentCallId) {
         this.log('Sending ICE candidate:', e.candidate.type, e.candidate.candidate.slice(0, 60));
-        this.signalChannel?.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
+        // Use custom signal broadcaster if set (WebSocket), otherwise fall back to Supabase broadcast
+        if (this.signalBroadcaster) {
+          this.signalBroadcaster('ice-candidate', e.candidate.toJSON());
+        } else {
+          this.signalChannel?.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
+        }
       }
     };
     this.pc.oniceconnectionstatechange = () => {
@@ -107,6 +149,11 @@ export class CallService {
 
   subscribeToSignaling(callId: string, userId: string, onSignal: (s: CallSignal) => void) {
     this.currentCallId = callId;
+    // If a custom signal transport is set (WebSocket), skip Supabase broadcast channels.
+    // Signal dispatching is handled externally via dispatchSignal().
+    if (this.signalHandler) {
+      return () => { /* WS path: cleanup handled by WS client */ };
+    }
     this.signalChannel = supabase.channel(`call:${callId}`);
     this.signalChannel.on('broadcast', { event: 'signal' }, (p) => onSignal(p.payload as CallSignal));
     this.signalChannel.subscribe();
@@ -190,16 +237,23 @@ export class CallService {
   }
 
   broadcastSignal(type: CallSignalType, data?: any) {
-    if (!this.signalChannel || !this.currentCallId) {
-      this.log('broadcastSignal FAILED: no channel or callId');
+    if (!this.currentCallId) {
+      this.log('broadcastSignal FAILED: no callId');
       return;
     }
     this.log('Broadcasting signal:', type);
-    this.signalChannel.send({
-      type: 'broadcast',
-      event: 'signal',
-      payload: { type, call_id: this.currentCallId, from: '', to: '', data }
-    });
+    // Use custom signal broadcaster if set (WebSocket), otherwise fall back to Supabase broadcast
+    if (this.signalBroadcaster) {
+      this.signalBroadcaster(type, data);
+    } else if (this.signalChannel) {
+      this.signalChannel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: { type, call_id: this.currentCallId, from: '', to: '', data }
+      });
+    } else {
+      this.log('broadcastSignal FAILED: no signal channel or broadcaster');
+    }
   }
 
   get currentCallIdVal(): string | null { return this.currentCallId; }

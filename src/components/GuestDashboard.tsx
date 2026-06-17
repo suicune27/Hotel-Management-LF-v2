@@ -6,6 +6,8 @@ import { Booking, Profile, Customer, InventoryItem, MenuCategory, GuestOrder, Ch
 import { AlertDialog } from './AlertDialog';
 import { getSettings, fetchSettingsFromSupabase, AppSettings } from '../lib/settings';
 import { CallService } from '../lib/callService';
+import { getCallClient } from '../lib/callServerClient';
+import { combineDateAndTime } from '../lib/booking-utils';
 import type { Call } from '../types';
 import { 
   Building, Calendar, User, LogOut, Home, Loader2, CalendarDays,
@@ -84,6 +86,9 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestIsMuted, setGuestIsMuted] = useState(false);
   const guestCallServiceRef = useRef<CallService | null>(null);
   const guestAudioRef = useRef<HTMLAudioElement | null>(null);
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const manualHangupRef = useRef(false);
+  const callViaWsRef = useRef(false);
   const [guestAudioOutputDevices, setGuestAudioOutputDevices] = useState<{ deviceId: string; label: string }[]>([]);
   const [guestSelectedOutputDevice, setGuestSelectedOutputDevice] = useState('default');
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
@@ -563,13 +568,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (!checkedInBooking) { setLiveStayDuration(''); return; }
     const calcDuration = () => {
       const parseTime = (dateStr: string, timeStr: string) => {
-        const [t, ampm] = (timeStr || '12:00 PM').split(' ');
-        let [h, m] = t.split(':').map(Number);
-        if (ampm === 'PM' && h !== 12) h += 12;
-        if (ampm === 'AM' && h === 12) h = 0;
-        const d = new Date(dateStr);
-        d.setHours(h, m, 0, 0);
-        return d;
+        return combineDateAndTime(dateStr, timeStr || '12:00 PM');
       };
       const now = new Date();
       const checkInDate = parseTime(checkedInBooking.check_in_date, checkedInBooking.check_in_time);
@@ -617,12 +616,10 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     if (guestCallStatus !== 'connected') return;
     const el = guestAudioRef.current;
     console.log('[GuestAudio] Starting poll for remoteStream, el:', !!el, 'ref:', !!guestCallServiceRef.current);
-    let attempts = 0;
     const check = setInterval(() => {
-      attempts++;
       const svc = guestCallServiceRef.current;
       const stream = svc?.remoteStream;
-      console.log('[GuestAudio] Poll attempt', attempts, 'stream:', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el:', !!el);
+      console.log('[GuestAudio] Polling stream:', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el:', !!el);
       if (stream && el && el.srcObject !== stream) {
         console.log('[GuestAudio] CONNECTING remote stream to audio element!');
         console.log('[GuestAudio] Audio tracks in stream:', stream.getAudioTracks().map(t => `${t.label}:${t.enabled}:${t.readyState}`));
@@ -632,7 +629,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         el.play().then(() => console.log('[GuestAudio] Audio play() SUCCESS')).catch((err) => console.log('[GuestAudio] Audio play() FAILED:', err));
         clearInterval(check);
       }
-      if (attempts > 50) { clearInterval(check); console.log('[GuestAudio] Giving up after 50 attempts (10s)'); }
+      
     }, 200);
     return () => {
       console.log('[GuestAudio] Poll cleanup');
@@ -873,6 +870,83 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       console.log('[GuestCall] Requesting microphone...');
       const ok = await svc.requestMicrophone();
       if (!ok) { console.log('[GuestCall] Mic denied'); setAlertState({ title: 'Microphone Required', message: 'Please allow microphone access to call the front desk.' }); setGuestCallStatus('idle'); return; }
+
+      // WS path: use WebSocket signaling when available
+      const wsClient = getCallClient();
+      if (wsClient.isConnected) {
+        console.log('[GuestCall] Using WebSocket signaling');
+        // callTimer stored in callTimerRef
+
+        wsClient.requestCall(checkedInBooking.id);
+
+        // Wait for acceptance and exchange offer/answer via WS signals
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Call timed out')), 30000);
+
+          wsClient.on({
+            onCallAccepted: (acceptCallId) => {
+              clearTimeout(timeout);
+              svc.createOffer().then((offer) => {
+                if (offer) {
+                  wsClient.sendSignal(acceptCallId, { type: 'offer', data: offer });
+
+                  svc.setSignalTransport(
+                    (signal) => {
+                      if (signal.type === 'answer') {
+                        svc.handleAnswer(signal.data).then(() => {
+                          setGuestCallStatus('connected');
+                          const start = Date.now();
+                          if (callTimerRef.current) clearInterval(callTimerRef.current);
+                          callTimerRef.current = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+                        }).catch((err) => console.error('[GuestCall] handleAnswer error:', err));
+                      } else if (signal.type === 'ice-candidate') {
+                        svc.queueIceCandidate(signal.data);
+                      } else if (signal.type === 'ended') {
+                        svc.endCall();
+                        setGuestCallStatus('ended');
+                        if (callTimerRef.current) clearInterval(callTimerRef.current);
+                      }
+                    },
+                    (type, data) => {
+                      if (type === 'ice-candidate') wsClient.sendSignal(acceptCallId, { type: 'ice-candidate', data });
+                    }
+                  );
+                }
+              });
+            },
+            onCallDeclined: () => {
+              clearTimeout(timeout);
+              setGuestCallStatus('ended');
+              reject(new Error('Call declined'));
+            },
+            onCallEnded: () => {
+              if (manualHangupRef.current) { manualHangupRef.current = false; return; }
+              clearTimeout(timeout);
+              svc.endCall();
+              setGuestCallStatus('ended');
+            },
+            onSignal: (signalCallId, from, signal: any) => {
+              if (signal.type === 'answer') {
+                clearTimeout(timeout);
+                svc.dispatchSignal({ type: 'answer', call_id: signalCallId, from: from, to: '', data: signal.data });
+              } else if (signal.type === 'ice-candidate') {
+                svc.queueIceCandidate(signal.data);
+              } else if (signal.type === 'ended') {
+                clearTimeout(timeout);
+                svc.endCall();
+                setGuestCallStatus('ended');
+                reject(new Error('Call ended'));
+              }
+            },
+          });
+        }).catch((err) => {
+          console.log('[GuestCall] WS call error:', err?.message || err);
+        });
+
+        callViaWsRef.current = true;
+        return;
+      }
+
       console.log('[GuestCall] Creating call in DB...');
       const call = await CallService.createCall({
         booking_id: checkedInBooking.id,
@@ -884,7 +958,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       });
       if (!call) { console.log('[GuestCall] Failed to create call in DB'); setAlertState({ title: 'Call Failed', message: 'Could not connect to the front desk. Make sure the "calls" table has been created in your Supabase database.' }); setGuestCallStatus('idle'); return; }
       console.log('[GuestCall] Call created:', call.id, 'status:', call.status);
-      let callTimer: ReturnType<typeof setInterval> | null = null;
+      // callTimer stored in callTimerRef
       let answerHandled = false;
       console.log('[GuestCall] Subscribing to signaling...');
       svc.subscribeToSignaling(call.id, effectiveProfile.id || '', async (signal) => {
@@ -900,7 +974,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
             console.log('[GuestCall] Setting status to connected');
             setGuestCallStatus('connected');
             const start = Date.now();
-            callTimer = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+            callTimerRef.current = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
             if (pollTimer) clearInterval(pollTimer);
           } else {
             console.log('[GuestCall] No answer_data in DB yet');
@@ -910,7 +984,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           console.log('[GuestCall] Call ended/declined via signal');
           answerHandled = true;
           setGuestCallStatus('ended');
-          if (callTimer) clearInterval(callTimer);
+          if (callTimerRef.current) clearInterval(callTimerRef.current);
           svc.endCall();
         }
         if (signal.type === 'ice-candidate') {
@@ -945,13 +1019,13 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           console.log('[GuestCall] Setting status to connected');
           setGuestCallStatus('connected');
           const start = Date.now();
-          callTimer = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+          callTimerRef.current = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
           clearInterval(pollTimer);
         }
         if (updated.status === 'missed' || updated.status === 'ended') {
           answerHandled = true;
           setGuestCallStatus('ended');
-          if (callTimer) clearInterval(callTimer);
+          if (callTimerRef.current) clearInterval(callTimerRef.current);
           clearInterval(pollTimer);
           svc.endCall();
           if (checkedInBooking && updated.status === 'missed') {
@@ -978,6 +1052,16 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
 
   const hangUpCall = async () => {
     console.log('[GuestCall] hangUpCall');
+    // Notify WS server if call was made via WebSocket
+    manualHangupRef.current = true;
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    try {
+      const wsClient = getCallClient();
+      if (wsClient.isConnected && callViaWsRef.current) {
+        wsClient.endCall();
+      }
+    } catch {}
+    callViaWsRef.current = false;
     if (guestCallServiceRef.current) {
       const svc = guestCallServiceRef.current;
       const callId = svc['currentCallIdVal'] || '';
@@ -1130,19 +1214,14 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         extPayload.requested_check_out_date = extendDate;
       } else {
         extPayload.requested_hours = extendHours;
-        const timeStr = checkedInBooking.check_out_time || '12:00 PM';
-        const [hStr, modifier] = timeStr.split(' ');
-        let [h, m] = hStr.split(':').map(Number);
-        if (modifier === 'PM' && h < 12) h += 12;
-        if (modifier === 'AM' && h === 12) h = 0;
-        const currentOut = new Date(checkedInBooking.check_out_date);
-        currentOut.setHours(h, m, 0, 0);
+        const currentOut = combineDateAndTime(checkedInBooking.check_out_date, checkedInBooking.check_out_time || '12:00 PM');
         const newOut = new Date(currentOut.getTime() + extendHours * 60 * 60 * 1000);
-        extPayload.requested_check_out_date = newOut.toISOString().split('T')[0];
-        const h24 = newOut.getHours();
-        const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
-        const ampm = h24 >= 12 ? 'PM' : 'AM';
-        extPayload.requested_check_out_time = `${h12}:${newOut.getMinutes().toString().padStart(2, '0')} ${ampm}`;
+        const yyyy = newOut.getFullYear();
+        const mm = String(newOut.getMonth() + 1).padStart(2, '0');
+        const dd = String(newOut.getDate()).padStart(2, '0');
+        extPayload.requested_check_out_date = `${yyyy}-${mm}-${dd}`;
+        const time24 = `${String(newOut.getHours()).padStart(2, '0')}:${String(newOut.getMinutes()).padStart(2, '0')}`;
+        extPayload.requested_check_out_time = to12h(time24);
       }
       const { error } = await supabase.from('stay_extensions').insert(extPayload);
       if (error) throw error;
@@ -1546,7 +1625,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                             <div className="min-w-0">
                               <p className="text-[8px] sm:text-[9px] text-surface-400 font-bold uppercase tracking-wider">Check-In</p>
                               <p className="text-[10px] sm:text-xs font-semibold text-surface-800 truncate">{checkedInBooking?.check_in_date}</p>
-                              <p className="text-[9px] sm:text-[10px] text-emerald-600 font-bold">{checkedInBooking?.check_in_time}</p>
+                              <p className="text-[9px] sm:text-[10px] text-emerald-600 font-bold">{checkedInBooking?.check_in_time ? to12h(checkedInBooking.check_in_time) : ''}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 px-2.5 sm:px-3.5 py-2.5 sm:py-3 bg-white/80 backdrop-blur-sm rounded-xl border border-emerald-100/80 shadow-sm">
@@ -1554,7 +1633,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                             <div className="min-w-0">
                               <p className="text-[8px] sm:text-[9px] text-surface-400 font-bold uppercase tracking-wider">Check-Out</p>
                               <p className="text-[10px] sm:text-xs font-semibold text-surface-800 truncate">{checkedInBooking?.check_out_date}</p>
-                              <p className="text-[9px] sm:text-[10px] text-emerald-600 font-bold">{checkedInBooking?.check_out_time}</p>
+                              <p className="text-[9px] sm:text-[10px] text-emerald-600 font-bold">{checkedInBooking?.check_out_time ? to12h(checkedInBooking.check_out_time) : ''}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 px-2.5 sm:px-3.5 py-2.5 sm:py-3 bg-white/80 backdrop-blur-sm rounded-xl border border-emerald-100/80 shadow-sm">
@@ -2768,7 +2847,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
       </AnimatePresence>
 
       {/* Audio element for remote call audio */}
-      <audio ref={guestAudioRef} autoPlay />
+<audio ref={guestAudioRef} autoPlay playsInline />
 
       {/* Call panel for guest — matches front desk style */}
       {guestCallStatus !== 'idle' && (

@@ -314,6 +314,12 @@ export function RoomModal({
     ? diffHours(modalBooking.check_in_date, modalBooking.check_in_time || '2:00 PM', modalBooking.check_out_date, modalBooking.check_out_time || '11:00 AM')
     : 0;
 
+  const isOverstay = useMemo(() => {
+    if (!modalBooking || modalBooking.status !== 'checked-in') return false;
+    const coDate = modalBooking.check_out_date ? new Date(modalBooking.check_out_date + 'T' + (modalBooking.check_out_time || '11:00')) : null;
+    return coDate ? coDate <= new Date() : false;
+  }, [modalBooking]);
+
   const roomImages = useMemo(() => {
     const imgs: string[] = [];
     if (room.image_url) imgs.push(room.image_url);
@@ -536,6 +542,11 @@ export function RoomModal({
                     {modalBooking?.status === 'checked-in' && (
                       <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-full text-[8px] font-bold text-blue-700 flex items-center gap-1">
                         <span className="w-1 h-1 rounded-full bg-blue-500 animate-pulse" /> LIVE
+                      </span>
+                    )}
+                    {isOverstay && (
+                      <span className="px-2 py-0.5 bg-rose-50 border border-rose-300 rounded-full text-[8px] font-bold text-rose-700 flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5" /> Overstay
                       </span>
                     )}
                   </div>

@@ -1264,6 +1264,18 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
     }
   }
 
+  const overstayRooms = useMemo(() => {
+    const s = new Set<string>();
+    const now = new Date();
+    for (const b of activeBookingsRaw) {
+      const coDate = b.check_out_date ? new Date(b.check_out_date + 'T' + (b.check_out_time || '11:00')) : null;
+      if (coDate && coDate <= now) {
+        s.add(b.room_id);
+      }
+    }
+    return s;
+  }, [activeBookingsRaw]);
+
   const statCounts = {
     available: rooms.filter((r) => r.status === 'available').length,
     booked: rooms.filter((r) => r.status === 'booked').length,
@@ -1745,6 +1757,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                       actionLoading={actionLoading}
                       statCounts={statCounts}
                       activeGuests={activeGuests}
+                      overstayRooms={overstayRooms}
                       currencySymbol={settings.currencySymbol}
                       onSearchChange={setSearchQuery}
                       onFilterChange={setStatusFilter}

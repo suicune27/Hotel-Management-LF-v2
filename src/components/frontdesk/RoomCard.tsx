@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Building, BedDouble, Loader2, LogOut, Check, Search, User } from 'lucide-react';
+import { Building, BedDouble, Loader2, LogOut, Check, Search, User, Clock } from 'lucide-react';
 import { Room } from '../../types';
 import { StatusChip } from './StatusChip';
 
@@ -8,6 +8,7 @@ interface RoomCardProps {
   isSelected: boolean;
   isLoading: boolean;
   guestName?: string;
+  isOverstay?: boolean;
   currencySymbol: string;
   onSelect: () => void;
   onQuickAction: (action: string) => void;
@@ -36,11 +37,19 @@ const QUICK_ACTIONS: Record<string, { label: string; icon: any; color: string; b
   ],
 };
 
-export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbol, onSelect, onQuickAction }: RoomCardProps) {
+export function RoomCard({ room, isSelected, isLoading, guestName, isOverstay, currencySymbol, onSelect, onQuickAction }: RoomCardProps) {
   const actions = QUICK_ACTIONS[room.status] || [];
 
   // Determine elegant Bento styles based on room status
   const bentoStyle = useMemo(() => {
+    if (isOverstay) {
+      return {
+        bg: 'bg-rose-50/60 border-rose-400 hover:border-rose-500',
+        numberColor: 'text-rose-900',
+        badgeColor: 'text-rose-700',
+        accentBorder: 'border-rose-200',
+      };
+    }
     switch (room.status) {
       case 'booked': // Occupied
         return {
@@ -79,7 +88,7 @@ export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbo
           accentBorder: 'border-surface-100',
         };
     }
-  }, [room.status]);
+  }, [room.status, isOverstay]);
 
   return (
     <div
@@ -113,6 +122,16 @@ export function RoomCard({ room, isSelected, isLoading, guestName, currencySymbo
           <StatusChip status={room.status} />
         </div>
         
+        {/* Overstay badge */}
+        {isOverstay && (
+          <div className="absolute top-2.5 left-2.5 z-10">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider bg-rose-500/90 text-white shadow-sm backdrop-blur-sm">
+              <Clock className="w-2.5 h-2.5" />
+              Overstay
+            </span>
+          </div>
+        )}
+
         {/* Guest name badge */}
         {guestName && (
           <div className="absolute bottom-2.5 left-2.5 right-2.5 z-10">

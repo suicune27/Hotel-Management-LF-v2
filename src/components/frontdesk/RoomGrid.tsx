@@ -14,6 +14,7 @@ interface RoomGridProps {
   actionLoading: string | null;
   statCounts: Record<string, number>;
   activeGuests: Map<string, string>;
+  overstayRooms: Set<string>;
   currencySymbol: string;
   onSearchChange: (q: string) => void;
   onFilterChange: (key: string | null) => void;
@@ -24,7 +25,7 @@ interface RoomGridProps {
 const FILTERS = ['available', 'booked', 'reserved', 'cleaning', 'maintenance'];
 
 export function RoomGrid({
-  rooms, loading, searchQuery, statusFilter, selectedRoomId, actionLoading, statCounts, activeGuests, currencySymbol,
+  rooms, loading, searchQuery, statusFilter, selectedRoomId, actionLoading, statCounts, activeGuests, overstayRooms, currencySymbol,
   onSearchChange, onFilterChange, onSelectRoom, onQuickAction,
 }: RoomGridProps) {
   const [listView, setListView] = useState(false);
@@ -129,10 +130,15 @@ export function RoomGrid({
                     </td>
                     <td className="px-3 py-2.5 text-surface-500 capitalize hidden sm:table-cell">{room.type}</td>
                     <td className="px-3 py-2.5">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider border ${cfg.color} ${cfg.bg}`}>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider border ${cfg.color} ${cfg.bg}">
                         <Icon className="w-2.5 h-2.5" />
                         {cfg.label || room.status}
                       </span>
+                      {overstayRooms.has(room.id) && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider bg-rose-50 border border-rose-300 text-rose-700">
+                          Overstay
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-surface-500 hidden md:table-cell">
                       {guest ? <span className="flex items-center gap-1"><User className="w-3 h-3 text-blue-400" />{guest}</span> : <span className="text-surface-300">—</span>}
@@ -159,6 +165,7 @@ export function RoomGrid({
               isSelected={selectedRoomId === room.id}
               isLoading={actionLoading === room.id}
               guestName={activeGuests.get(room.id)}
+              isOverstay={overstayRooms.has(room.id)}
               currencySymbol={currencySymbol}
               onSelect={() => onSelectRoom(room)}
               onQuickAction={(action) => onQuickAction(room, action)}

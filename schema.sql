@@ -302,6 +302,7 @@ CREATE TABLE IF NOT EXISTS public.payroll_entries (
 
 -- 2. ADD NEW COLUMNS & RENAMES (migration-safe)
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS min_stay_hours INTEGER NOT NULL DEFAULT 3 CHECK (min_stay_hours > 0);
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS access_code TEXT;
 ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS extend_type TEXT NOT NULL DEFAULT 'day' CHECK (extend_type IN ('day', 'hour'));
 ALTER TABLE public.stay_extensions ADD COLUMN IF NOT EXISTS requested_hours INTEGER;
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS check_in_time TEXT NOT NULL DEFAULT '2:00 PM';

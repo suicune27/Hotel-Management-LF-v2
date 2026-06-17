@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, UserPlus, CalendarPlus, Shield, Sparkles, Wrench, Pencil, User, CalendarClock, ShoppingCart, Receipt, CreditCard, FileText, ArrowRightLeft, DoorOpen, CheckCircle, XCircle, Users, Phone, Clock, History, Calendar, Star, Loader2, ChevronRight, ChevronLeft, Maximize2, Minimize2, Building, BedDouble, LogOut, Check, AlertTriangle, Image, GripVertical, MoreVertical, ClipboardList, DollarSign, MapPin, Printer } from 'lucide-react';
+import { X, UserPlus, CalendarPlus, Shield, Sparkles, Wrench, Pencil, User, CalendarClock, ShoppingCart, Receipt, CreditCard, FileText, ArrowRightLeft, DoorOpen, CheckCircle, XCircle, Users, Phone, Clock, History, Calendar, Star, Loader2, ChevronRight, ChevronLeft, Maximize2, Minimize2, Building, BedDouble, LogOut, Check, AlertTriangle, Image, GripVertical, MoreVertical, ClipboardList, DollarSign, MapPin, Printer, Eye, EyeOff } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Room, Booking } from '../../types';
 import { QRCodeSVG } from 'qrcode.react';
@@ -81,10 +81,37 @@ export function RoomModal({
   const [sharingCode, setSharingCode] = useState<string>(modalBooking?.sharing_code || '');
   const [generatingSharingCode, setGeneratingSharingCode] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [accessCodeRevealed, setAccessCodeRevealed] = useState(false);
+  const [accessCodePromptOpen, setAccessCodePromptOpen] = useState(false);
+  const [accessCodePwdInput, setAccessCodePwdInput] = useState('');
+  const [accessCodePwdVerifying, setAccessCodePwdVerifying] = useState(false);
 
   useEffect(() => {
     setSharingCode(modalBooking?.sharing_code || '');
   }, [modalBooking?.sharing_code]);
+
+  const handleRevealAccessCode = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user?.email) return;
+    setAccessCodePromptOpen(true);
+    setAccessCodePwdInput('');
+  };
+
+  const confirmRevealAccessCode = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user?.email || !accessCodePwdInput) return;
+    setAccessCodePwdVerifying(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: session.user.email,
+        password: accessCodePwdInput,
+      });
+      if (error) { setAccessCodePwdVerifying(false); return; }
+      setAccessCodeRevealed(true);
+      setAccessCodePromptOpen(false);
+      setAccessCodePwdInput('');
+    } catch { } finally { setAccessCodePwdVerifying(false); }
+  };
 
   const handleGenerateSharingCode = useCallback(async () => {
     if (!modalBooking) return;
@@ -402,6 +429,26 @@ export function RoomModal({
                 <span className="w-1 h-1 rounded-full bg-surface-300" />
                 <span className="font-semibold text-surface-600">{currencySymbol}{Number(room.price_per_hour).toLocaleString()}/hr</span>
               </div>
+              {room.access_code && (
+                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-surface-400">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider">Access Code:</span>
+                  {accessCodeRevealed ? (
+                    <>
+                      <span className="font-mono font-bold text-surface-900 tracking-widest">{room.access_code}</span>
+                      <button onClick={() => setAccessCodeRevealed(false)} className="p-0.5 text-surface-400 hover:text-surface-600 cursor-pointer" title="Hide code">
+                        <EyeOff className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-mono text-surface-300 tracking-widest">•••••</span>
+                      <button onClick={handleRevealAccessCode} className="p-0.5 text-surface-400 hover:text-brand-600 cursor-pointer" title="Reveal access code (requires password)">
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0 ml-4">
@@ -1265,6 +1312,30 @@ export function RoomModal({
               </button>
             </motion.div>
           </motion.div>
+        )}
+        {accessCodePromptOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40" onClick={() => setAccessCodePromptOpen(false)}>
+            <div className="bg-white rounded-xl shadow-2xl border border-surface-200 p-5 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+              <h3 className="text-sm font-bold text-surface-900 mb-2">Confirm Password</h3>
+              <p className="text-xs text-surface-500 mb-4">Enter your password to reveal the room access code.</p>
+              <input
+                type="password"
+                value={accessCodePwdInput}
+                onChange={e => setAccessCodePwdInput(e.target.value)}
+                placeholder="Your password"
+                autoFocus
+                className="w-full bg-white border border-surface-200 rounded-lg py-2.5 px-3 text-xs text-surface-800 placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 mb-4"
+                onKeyDown={e => { if (e.key === 'Enter') confirmRevealAccessCode(); }}
+              />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setAccessCodePromptOpen(false)} className="px-3 py-1.5 border border-surface-200 text-surface-600 rounded-lg text-[10px] font-semibold cursor-pointer hover:bg-surface-50">Cancel</button>
+                <button onClick={confirmRevealAccessCode} disabled={accessCodePwdVerifying || !accessCodePwdInput} className="px-3 py-1.5 bg-surface-900 hover:bg-surface-800 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-colors disabled:opacity-50 flex items-center gap-1">
+                  {accessCodePwdVerifying && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>

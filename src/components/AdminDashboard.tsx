@@ -14,7 +14,7 @@ import { fileToBase64, isValidImageType } from '../lib/imageUpload';
 import { 
   Building, BookOpen, UserCheck, Users, Activity, Sparkles, DollarSign, CreditCard,
   Plus, Trash2, Check, X, Calendar, Edit3, Key, LogOut, Loader2, RefreshCw, Layers, Settings, AlertTriangle, Clock,
-  Package, ShoppingCart, AlertCircle, Minus, Bell, MessageSquareText, Send, ChevronDown, ChevronUp, Mail, Search, ChevronLeft, ChevronRight, Phone, Eye, Filter, UserPlus, Tag, TrendingUp, Grid3X3, FileText, Download, ImageUp, ListChecks, Percent, ClipboardList,
+  Package, ShoppingCart, AlertCircle, Minus, Bell, MessageSquareText, Send, ChevronDown, ChevronUp, Mail, Search, ChevronLeft, ChevronRight, Phone, Eye, EyeOff, Filter, UserPlus, Tag, TrendingUp, Grid3X3, FileText, Download, ImageUp, ListChecks, Percent, ClipboardList,
   Printer, FileSpreadsheet
 } from 'lucide-react';
 import { getSettings, saveSettings, fetchSettingsFromSupabase, AppSettings } from '../lib/settings';
@@ -383,6 +383,10 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   // CRUD Form States
   const [roomModal, setRoomModal] = useState<'create' | 'edit' | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [revealedAccessCodes, setRevealedAccessCodes] = useState<Set<string>>(new Set());
+  const [accessCodePromptRoom, setAccessCodePromptRoom] = useState<string | null>(null);
+  const [accessCodePassword, setAccessCodePassword] = useState('');
+  const [accessCodeVerifying, setAccessCodeVerifying] = useState(false);
   const [roomForm, setRoomForm] = useState({
     room_number: '',
     type: 'Standard Room',
@@ -392,6 +396,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
     min_stay_hours: 3,
     status: 'available' as 'available' | 'booked' | 'reserved' | 'cleaning' | 'maintenance',
     image_url: '',
+    access_code: '',
     check_in_times: [] as string[],
     check_out_times: [] as string[]
   });
@@ -1009,6 +1014,28 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
   }, [bookings, reportDateFrom, reportDateTo]);
 
   // Rooms CRUD Handles
+  const handleRevealAccessCode = async (roomId: string) => {
+    if (!userProfile?.email) { triggerAlert('Error', 'Cannot verify your identity. No email on file.'); return; }
+    setAccessCodePromptRoom(roomId);
+    setAccessCodePassword('');
+  };
+
+  const confirmRevealAccessCode = async () => {
+    if (!accessCodePromptRoom || !accessCodePassword) return;
+    setAccessCodeVerifying(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: userProfile!.email!,
+        password: accessCodePassword,
+      });
+      if (error) { triggerAlert('Verification Failed', 'Incorrect password. Access code remains hidden.'); setAccessCodeVerifying(false); return; }
+      setRevealedAccessCodes(prev => new Set(prev).add(accessCodePromptRoom));
+      setAccessCodePromptRoom(null);
+      setAccessCodePassword('');
+    } catch { triggerAlert('Error', 'Something went wrong.'); }
+    setAccessCodeVerifying(false);
+  };
+
   const handleOpenRoomCreate = () => {
     setSelectedRoom(null);
     setRoomForm({
@@ -1020,6 +1047,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       min_stay_hours: 3,
       status: 'available',
       image_url: '',
+      access_code: '',
       check_in_times: [...(settings.checkInTimes.length > 0 ? settings.checkInTimes : [])] as string[],
       check_out_times: [...(settings.checkOutTimes.length > 0 ? settings.checkOutTimes : [])] as string[]
     });
@@ -1037,6 +1065,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
       min_stay_hours: room.min_stay_hours ?? 3,
       status: room.status,
       image_url: room.image_url || '',
+      access_code: room.access_code || '',
       check_in_times: room.check_in_times || [...(settings.checkInTimes.length > 0 ? settings.checkInTimes : [])],
       check_out_times: room.check_out_times || [...(settings.checkOutTimes.length > 0 ? settings.checkOutTimes : [])]
     });
@@ -1068,6 +1097,7 @@ export default function AdminDashboard({ onNavigate, userSession, userProfile, o
         min_stay_hours: Number(roomForm.min_stay_hours) || 3,
         status: roomForm.status,
         image_url: roomForm.image_url.trim() || '',
+        access_code: roomForm.access_code.trim() || null,
         check_in_times: check_in_times,
         check_out_times: check_out_times
       };
@@ -2480,7 +2510,8 @@ Confirm this change?`,
                               <th className="p-4">Rate / hour</th>
                               <th className="p-4">Max Occupancy</th>
                               <th className="p-4">Min Stay</th>
-                               <th className="p-4">Roster Status</th>
+                              <th className="p-4">Access Code</th>
+                              <th className="p-4">Roster Status</th>
                               <th className="p-4">Bookings</th>
                               <th className="p-4 text-right">Actions</th>
                             </tr>
@@ -2515,6 +2546,29 @@ Confirm this change?`,
                                     </td>
                                     <td className="p-4 font-mono text-xs text-surface-500">
                                       {room.min_stay_hours || settings.minStayHours || 3}h
+                                    </td>
+                                    <td className="p-4">
+                                      <div className="flex items-center gap-1.5">
+                                        {room.access_code ? (
+                                          revealedAccessCodes.has(room.id) ? (
+                                            <>
+                                              <span className="font-mono font-bold text-surface-900 tracking-wider">{room.access_code}</span>
+                                              <button onClick={e => { e.stopPropagation(); setRevealedAccessCodes(prev => { const next = new Set(prev); next.delete(room.id); return next; }); }} className="p-1 text-surface-400 hover:text-surface-600 cursor-pointer" title="Hide code">
+                                                <Eye className="w-3.5 h-3.5" />
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <span className="font-mono text-surface-300 tracking-widest">•••••••</span>
+                                              <button onClick={e => { e.stopPropagation(); handleRevealAccessCode(room.id); }} className="p-1 text-surface-400 hover:text-brand-600 cursor-pointer" title="Reveal access code (requires password)">
+                                                <EyeOff className="w-3.5 h-3.5" />
+                                              </button>
+                                            </>
+                                          )
+                                        ) : (
+                                          <span className="text-surface-300 italic">—</span>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="p-4">
                                       <select
@@ -6877,6 +6931,37 @@ Confirm this change?`,
         </div>
       )}
 
+      {/* ACCESS CODE PASSWORD PROMPT */}
+      {accessCodePromptRoom && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setAccessCodePromptRoom(null)}>
+          <div className="bg-white rounded-xl shadow-2xl border border-surface-200 p-5 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-surface-900">Confirm Password</h3>
+              <button onClick={() => setAccessCodePromptRoom(null)} className="p-1 text-surface-400 hover:text-surface-600 cursor-pointer rounded-lg hover:bg-surface-100 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-surface-500 mb-4">Enter your password to reveal the room access code.</p>
+            <input
+              type="password"
+              value={accessCodePassword}
+              onChange={e => setAccessCodePassword(e.target.value)}
+              placeholder="Your password"
+              autoFocus
+              className="w-full bg-white border border-surface-200 rounded-lg py-2.5 px-3 text-xs text-surface-800 placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 mb-4"
+              onKeyDown={e => { if (e.key === 'Enter') confirmRevealAccessCode(); }}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setAccessCodePromptRoom(null)} className="px-3 py-1.5 border border-surface-200 text-surface-600 rounded-lg text-[10px] font-semibold cursor-pointer hover:bg-surface-50">Cancel</button>
+              <button onClick={confirmRevealAccessCode} disabled={accessCodeVerifying || !accessCodePassword} className="px-3 py-1.5 bg-surface-900 hover:bg-surface-800 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-colors disabled:opacity-50 flex items-center gap-1">
+                {accessCodeVerifying && <Loader2 className="w-3 h-3 animate-spin" />}
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CRUD MODAL FOR ROOMS */}
       {roomModal && (
         <div className="fixed inset-0 bg-surface-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -7044,6 +7129,26 @@ Confirm this change?`,
                     />
                     <p className="text-[10px] text-surface-400 mt-1">Paste an image URL for the suite listing card</p>
                   </div>
+                </div>
+              </div>
+
+              {/* Section: Access Code */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-violet-600 font-mono">
+                  <Key className="w-3.5 h-3.5" /> Room Access Code
+                </div>
+                <div>
+                  <div className="relative">
+                    <Key className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-400" />
+                    <input
+                      type="text"
+                      value={roomForm.access_code}
+                      onChange={(e) => setRoomForm({ ...roomForm, access_code: e.target.value })}
+                      placeholder="e.g. 1234 or #7890"
+                      className="w-full pl-8 bg-white border border-surface-200 rounded-lg py-2.5 pr-3 text-xs text-surface-800 placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-shadow font-sans tracking-tight"
+                    />
+                  </div>
+                  <p className="text-[10px] text-surface-400 mt-1">Door code or keypad PIN for guest access. Hidden by default, requires staff password to reveal.</p>
                 </div>
               </div>
 

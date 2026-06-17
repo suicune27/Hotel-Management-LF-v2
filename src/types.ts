@@ -30,6 +30,7 @@ export interface Room {
   min_stay_hours?: number;
   status: 'available' | 'booked' | 'reserved' | 'cleaning' | 'maintenance';
   image_url: string;
+  access_code?: string | null;
   check_in_times?: string[];
   check_out_times?: string[];
   created_at: string;

@@ -67,9 +67,10 @@ interface StayProgressBarProps {
 }
 
 export function StayProgressBar({ elapsedHours, totalHours, checkIn, checkOut, currencySymbol, ratePerHour }: StayProgressBarProps) {
-  const pct = totalHours > 0 ? Math.min((elapsedHours / totalHours) * 100, 100) : 0;
-  const remaining = Math.max(totalHours - elapsedHours, 0);
-  const accrued = elapsedHours * ratePerHour;
+  const safeElapsed = isNaN(elapsedHours) ? 0 : elapsedHours;
+  const pct = totalHours > 0 ? Math.min((safeElapsed / totalHours) * 100, 100) : 0;
+  const remaining = Math.max(totalHours - safeElapsed, 0);
+  const accrued = safeElapsed * ratePerHour;
 
   const getBarColor = () => {
     if (pct > 90) return 'from-amber-500 via-orange-500 to-rose-500';

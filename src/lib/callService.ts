@@ -15,12 +15,14 @@ const DEFAULT_ICE_SERVERS: IceServerConfig[] = [
   { urls: 'stun:stun4.l.google.com:19302' },
 ];
 
+export type CallSignalType = 'offer' | 'answer' | 'ice-candidate' | 'declined' | 'ended';
+
 export interface CallSignal {
-  type: 'offer' | 'answer' | 'ice-candidate';
+  type: CallSignalType;
   call_id: string;
   from: string;
   to: string;
-  data: any;
+  data?: any;
 }
 
 export class CallService {
@@ -187,7 +189,7 @@ export class CallService {
     return enabled;
   }
 
-  broadcastSignal(type: string, data?: any) {
+  broadcastSignal(type: CallSignalType, data?: any) {
     if (!this.signalChannel || !this.currentCallId) {
       this.log('broadcastSignal FAILED: no channel or callId');
       return;

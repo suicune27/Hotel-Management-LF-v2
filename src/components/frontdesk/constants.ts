@@ -22,7 +22,9 @@ export const diffHours = (ciDate: string, ciTime: string, coDate: string, coTime
   const from = new Date(`${toIso(ciDate)}T${to24h(ciTime)}`);
   const to = new Date(`${toIso(coDate)}T${to24h(coTime)}`);
   const ms = to.getTime() - from.getTime();
-  return Math.max(0, ms / (1000 * 60 * 60));
+  let hours = ms / (1000 * 60 * 60);
+  if (hours <= 0) hours += 24;
+  return Math.max(0, hours);
 };
 
 export const to24h = (t: string) => {
@@ -41,6 +43,40 @@ export const to24h = (t: string) => {
     return `${h.toString().padStart(2, '0')}:${m24[2]}`;
   }
   return '00:00';
+};
+
+export const to12h = (t: string) => {
+  const clean = t.trim();
+
+  const m12 = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const suffix = m12[4].toUpperCase();
+    const isPM = suffix === 'PM';
+    if (isPM && h !== 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    const h12 = h % 12 || 12;
+    return `${h12}:${m12[2]} ${suffix}`;
+  }
+
+  const m24 = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (m24) {
+    const hNum = parseInt(m24[1], 10);
+    const ampm = hNum >= 12 ? 'PM' : 'AM';
+    const h12 = hNum % 12 || 12;
+    return `${h12}:${m24[2]} ${ampm}`;
+  }
+
+  return clean;
+};
+
+/** Formats a date string to locale date. If the date has no timezone info and
+ *  the given time crosses midnight (time < ciTime on same date), bump by 1 day. */
+export const displayDate = (date: string, time: string, ciDate: string, ciTime: string) => {
+  const d = new Date(`${toIso(date)}T${to24h(time)}`);
+  const ci = new Date(`${toIso(ciDate)}T${to24h(ciTime)}`);
+  if (d <= ci) d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString();
 };
 
 export const toIso = (s: string) => {

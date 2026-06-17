@@ -15,6 +15,7 @@ import {
   Mic, MicOff, Shield, Trash2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { to12h } from './frontdesk/constants';
 
 interface GuestDashboardProps {
   onNavigate: (screen: 'login' | 'admin-dashboard' | 'employee-dashboard' | 'guest-dashboard' | 'guest-access') => void;
@@ -87,8 +88,14 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestSelectedOutputDevice, setGuestSelectedOutputDevice] = useState('default');
   const [showCheckoutConfirmModal, setShowCheckoutConfirmModal] = useState(false);
 
-  // Stay extensions (kept for loading history)
+  // Stay extensions
   const [extensions, setExtensions] = useState<StayExtension[]>([]);
+  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [extendDate, setExtendDate] = useState('');
+  const [extendType, setExtendType] = useState<'day' | 'hour'>('day');
+  const [extendHours, setExtendHours] = useState(1);
+  const [extendReason, setExtendReason] = useState('');
+  const [extending, setExtending] = useState(false);
 
   // Chat sidebar toggle
   const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
@@ -1106,6 +1113,72 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
     }
   };
 
+  // ===== STAY EXTENSION =====
+  const requestExtension = async () => {
+    if (!checkedInBooking) return;
+    if (extendType === 'day' && !extendDate) return;
+    if (extendType === 'hour' && (!extendHours || extendHours < 1)) return;
+    setExtending(true);
+    try {
+      const extPayload: any = {
+        booking_id: checkedInBooking.id,
+        extend_type: extendType,
+        reason: extendReason.trim() || 'Guest requested extension',
+        status: 'pending'
+      };
+      if (extendType === 'day') {
+        extPayload.requested_check_out_date = extendDate;
+      } else {
+        extPayload.requested_hours = extendHours;
+        const timeStr = checkedInBooking.check_out_time || '12:00 PM';
+        const [hStr, modifier] = timeStr.split(' ');
+        let [h, m] = hStr.split(':').map(Number);
+        if (modifier === 'PM' && h < 12) h += 12;
+        if (modifier === 'AM' && h === 12) h = 0;
+        const currentOut = new Date(checkedInBooking.check_out_date);
+        currentOut.setHours(h, m, 0, 0);
+        const newOut = new Date(currentOut.getTime() + extendHours * 60 * 60 * 1000);
+        extPayload.requested_check_out_date = newOut.toISOString().split('T')[0];
+        const h24 = newOut.getHours();
+        const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
+        const ampm = h24 >= 12 ? 'PM' : 'AM';
+        extPayload.requested_check_out_time = `${h12}:${newOut.getMinutes().toString().padStart(2, '0')} ${ampm}`;
+      }
+      const { error } = await supabase.from('stay_extensions').insert(extPayload);
+      if (error) throw error;
+      // Send chat notification to front desk
+      try {
+        const extDesc = extendType === 'day'
+          ? `extend to ${extendDate}`
+          : `extend by ${extendHours} hour${extendHours > 1 ? 's' : ''}`;
+        await supabase.from('chat_messages').insert({
+          booking_id: checkedInBooking.id,
+          sender_id: chatSenderId,
+          sender_name: effectiveProfile.full_name || 'Guest',
+          sender_role: 'guest',
+          message: `🕐 Extension Request: ${extDesc}${extendReason.trim() ? ` — "${extendReason.trim()}"` : ''}`
+        });
+      } catch (chatErr) {
+        console.warn('Failed to send extension chat notification:', chatErr);
+      }
+      setShowExtendModal(false);
+      setExtendDate('');
+      setExtendHours(1);
+      setExtendReason('');
+      setAlertState({ title: 'Extension Requested!', message: 'Your extension request has been sent to the front desk for approval.' });
+      const { data: extRes } = await supabase
+        .from('stay_extensions')
+        .select('*')
+        .eq('booking_id', checkedInBooking.id)
+        .order('created_at', { ascending: false });
+      if (extRes) setExtensions(extRes);
+    } catch (err: any) {
+      setAlertState({ title: 'Error', message: err.message });
+    } finally {
+      setExtending(false);
+    }
+  };
+
   // Build tab list based on whether guest is checked in
   const guestTabs: { id: GuestTab; label: string; icon: any }[] = [
     { id: 'bookings', label: 'My Bookings', icon: CalendarDays },
@@ -1677,12 +1750,12 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                               <div>
                                 <p className="text-[9px] text-surface-400 font-bold uppercase tracking-wider mb-1">Check-In</p>
                                 <p className="text-xs font-semibold text-surface-800">{booking.check_in_date}</p>
-                                <p className="text-[9px] text-emerald-700 font-bold mt-0.5">{booking.check_in_time}</p>
+                                <p className="text-[9px] text-emerald-700 font-bold mt-0.5">{to12h(booking.check_in_time)}</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[9px] text-surface-400 font-bold uppercase tracking-wider mb-1">Check-Out</p>
                                 <p className="text-xs font-semibold text-surface-800">{booking.check_out_date}</p>
-                                <p className="text-[9px] text-emerald-700 font-bold mt-0.5">{booking.check_out_time}</p>
+                                <p className="text-[9px] text-emerald-700 font-bold mt-0.5">{to12h(booking.check_out_time)}</p>
                               </div>
                             </div>
 
@@ -2055,6 +2128,20 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                         >
                           {guestCallStatus === 'calling' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Phone className="w-3 h-3 text-white" />}
                           {guestCallStatus === 'calling' ? 'Calling...' : guestCallStatus === 'connected' ? 'On Call' : 'Call Front Desk'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtendDate(checkedInBooking?.check_out_date || '');
+                            setExtendType('day');
+                            setExtendHours(1);
+                            setExtendReason('');
+                            setShowExtendModal(true);
+                          }}
+                          className="px-2.5 sm:px-3 py-1.5 bg-white hover:bg-surface-50 border border-surface-200 text-surface-700 rounded-xl font-bold cursor-pointer transition-all flex items-center gap-1 text-[10px] sm:text-[11px] shadow-sm hover:shadow-md"
+                        >
+                          <Clock className="w-3 h-3 text-surface-500" />
+                          Extend Stay
                         </button>
                         <button
                           type="button"
@@ -2558,6 +2645,127 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
         )}
       </AnimatePresence>
 
+      {/* Extend Stay Modal */}
+      <AnimatePresence>
+        {showExtendModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowExtendModal(false)}
+              className="fixed inset-0 bg-surface-950/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl border border-surface-200 max-w-sm w-full p-6 shadow-xl relative z-10 space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-surface-900">Extend Your Stay</h3>
+                  <p className="text-[10px] text-surface-400">Request to extend your reservation</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex bg-surface-100 rounded-lg p-1">
+                  <button
+                    type="button"
+                    onClick={() => setExtendType('day')}
+                    className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${extendType === 'day' ? 'bg-white text-brand-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'}`}
+                  >
+                    <span className="inline-flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> Per Day</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExtendType('hour')}
+                    className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${extendType === 'hour' ? 'bg-white text-brand-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'}`}
+                  >
+                    <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Per Hour</span>
+                  </button>
+                </div>
+
+                {extendType === 'day' ? (
+                  <div>
+                    <label className="block text-xs text-surface-500 font-medium mb-1.5">New Check-Out Date</label>
+                    <input
+                      type="date"
+                      value={extendDate}
+                      onChange={(e) => setExtendDate(e.target.value)}
+                      min={checkedInBooking?.check_out_date || ''}
+                      className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs text-surface-500 font-medium mb-1.5">Additional Hours</label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setExtendHours(Math.max(1, extendHours - 1))}
+                        className="p-2 bg-surface-100 hover:bg-surface-200 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <Minus className="w-4 h-4 text-surface-600" />
+                      </button>
+                      <input
+                        type="number"
+                        value={extendHours}
+                        onChange={(e) => setExtendHours(Math.max(1, parseInt(e.target.value) || 1))}
+                        min={1}
+                        max={24}
+                        className="w-20 text-center bg-surface-50 border border-surface-200 rounded-xl px-3 py-2.5 text-sm font-bold text-surface-900 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setExtendHours(Math.min(24, extendHours + 1))}
+                        className="p-2 bg-surface-100 hover:bg-surface-200 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <Plus className="w-4 h-4 text-surface-600" />
+                      </button>
+                      <span className="text-xs text-surface-500">hours</span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs text-surface-500 font-medium mb-1.5">Reason (optional)</label>
+                  <textarea
+                    value={extendReason}
+                    onChange={(e) => setExtendReason(e.target.value)}
+                    placeholder="Tell us why you'd like to extend your stay..."
+                    rows={2}
+                    className="w-full bg-surface-50 border border-surface-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 resize-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowExtendModal(false)}
+                  className="flex-1 py-2 text-xs font-semibold hover:bg-surface-50 text-surface-600 border border-surface-200 rounded-xl cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={requestExtension}
+                  disabled={(extendType === 'day' && !extendDate) || (extendType === 'hour' && (!extendHours || extendHours < 1)) || extending}
+                  className="flex-1 py-2 text-xs font-semibold bg-brand-600 hover:bg-brand-700 disabled:bg-surface-200 text-white rounded-xl cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all shadow-sm"
+                >
+{extending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {extending ? 'Requesting...' : 'Submit Extension Request'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Audio element for remote call audio */}
       <audio ref={guestAudioRef} autoPlay />

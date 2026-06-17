@@ -26,7 +26,7 @@ import type { RoomModalAction } from './frontdesk/RoomModal';
 
 import {
   STATUS_CONFIG, ORDER_STATUS_FLOW, diffHours, todayStr, tomorrowStr, nowTime,
-  toIso, to24h, timeToMin, minToTime12, snapToNearest, dt, DeskTab, InvoiceData,
+  toIso, to24h, timeToMin, minToTime12, snapToNearest, dt, to12h, DeskTab, InvoiceData,
 } from './frontdesk/constants';
 import { EXTEND_PRESETS, addHoursToDate } from '../lib/booking-utils';
 import NotificationBell, { type AppNotification } from './NotificationBell';
@@ -1670,7 +1670,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-surface-900">{(b as any).customers?.full_name || 'Guest'}</p>
-                        <p className="text-xs text-surface-500">Suite #{((b as any).rooms as Room)?.room_number || '?'} · {b.check_in_time || '—'}</p>
+                        <p className="text-xs text-surface-500">Suite #{((b as any).rooms as Room)?.room_number || '?'} · {to12h(b.check_in_time || '—')}</p>
                       </div>
                       <button
                         onClick={() => {
@@ -1893,7 +1893,7 @@ export default function FrontDeskPanel({ onNavigate, userProfile, onLogout }: Fr
                             <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-blue-700 text-sm">#{(b as any).rooms?.room_number}</div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-surface-900">{(b as any).customers?.full_name || 'Guest'}</p>
-                              <p className="text-xs text-surface-400">Check-out: {b.check_out_time || 'Anytime'}</p>
+                              <p className="text-xs text-surface-400">Check-out: {to12h(b.check_out_time || 'Anytime')}</p>
                             </div>
                             <button onClick={() => { setSelectedRoom(rooms.find(r => r.id === b.room_id) || null); setActiveTab('rooms'); }} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold cursor-pointer">Open Room</button>
                           </div>

@@ -27,7 +27,10 @@ export function combineDateAndTime(isoDate: string, time12: string): Date {
 }
 
 export function hoursBetween(ciDate: string, ciTime: string, coDate: string, coTime: string): number {
-  return Math.max(0, (combineDateAndTime(coDate, coTime).getTime() - combineDateAndTime(ciDate, ciTime).getTime()) / MS_PER_HOUR);
+  const ms = combineDateAndTime(coDate, coTime).getTime() - combineDateAndTime(ciDate, ciTime).getTime();
+  let hours = ms / MS_PER_HOUR;
+  if (hours <= 0) hours += 24;
+  return Math.max(0, hours);
 }
 
 export function addHoursToDate(isoDate: string, time12: string, hours: number): { date: string; time: string } {

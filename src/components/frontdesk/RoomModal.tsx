@@ -7,7 +7,7 @@ import { Room, Booking } from '../../types';
 import { QRCodeSVG } from 'qrcode.react';
 import { StatusChip } from './StatusChip';
 import { RoomTimeline, StayProgressBar } from './RoomTimeline';
-import { STATUS_CONFIG, dt, diffHours } from './constants';
+import { STATUS_CONFIG, dt, diffHours, to12h, displayDate } from './constants';
 
 export type RoomModalAction = {
   key: string;
@@ -280,7 +280,7 @@ export function RoomModal({
   useEffect(() => {
     if (!modalBooking?.check_in_date) return;
     const ci = new Date(dt(modalBooking.check_in_date, modalBooking.check_in_time || '00:00'));
-    const update = () => setLiveHours(Math.max(0, (Date.now() - ci.getTime()) / 3600000));
+    const update = () => setLiveHours(Math.max(0, (Date.now() - ci.getTime()) / 3600000) || 0);
     update();
     const interval = setInterval(update, 30000);
     return () => clearInterval(interval);
@@ -299,11 +299,11 @@ export function RoomModal({
     const out = [
       { label: 'Booking created', date: modalBooking.created_at ? new Date(modalBooking.created_at).toLocaleDateString() : undefined, done: true },
       {
-        label: 'Check-in', date: formatDateValue(modalBooking.check_in_date), time: modalBooking.check_in_time,
+        label: 'Check-in', date: formatDateValue(modalBooking.check_in_date), time: to12h(modalBooking.check_in_time || ''),
         done: modalBooking.status === 'checked-in' || modalBooking.status === 'completed', active: modalBooking.status === 'checked-in'
       },
       {
-        label: 'Expected check-out', date: formatDateValue(modalBooking.check_out_date), time: modalBooking.check_out_time,
+        label: 'Expected check-out', date: formatDateValue(modalBooking.check_out_date), time: to12h(modalBooking.check_out_time || ''),
         done: modalBooking.status === 'completed'
       },
     ];
@@ -768,8 +768,8 @@ export function RoomModal({
                       <StayProgressBar
                         elapsedHours={liveHours}
                         totalHours={totalStayHours}
-                        checkIn={`${formatDateValue(modalBooking.check_in_date)} ${modalBooking.check_in_time || ''}`}
-                        checkOut={`${formatDateValue(modalBooking.check_out_date)} ${modalBooking.check_out_time || ''}`}
+                        checkIn={`${formatDateValue(modalBooking.check_in_date)} ${to12h(modalBooking.check_in_time || '')}`}
+                        checkOut={`${displayDate(modalBooking.check_out_date, modalBooking.check_out_time || '', modalBooking.check_in_date, modalBooking.check_in_time || '')} ${to12h(modalBooking.check_out_time || '')}`}
                         currencySymbol={currencySymbol}
                         ratePerHour={Number(room.price_per_hour)}
                       />
@@ -843,13 +843,13 @@ export function RoomModal({
                         <div className="bg-surface-0 rounded-lg p-2">
                           <p className="text-surface-400 text-[10px]">Check In</p>
                           <p className="font-semibold text-surface-700 text-[11px] mt-0.5">
-                            {formatDateValue(currentGuestBookings[0].check_in_date)} {currentGuestBookings[0].check_in_time || ''}
+                            {formatDateValue(currentGuestBookings[0].check_in_date)} {to12h(currentGuestBookings[0].check_in_time || '')}
                           </p>
                         </div>
                         <div className="bg-surface-0 rounded-lg p-2">
                           <p className="text-surface-400 text-[10px]">Check Out</p>
                           <p className="font-semibold text-surface-700 text-[11px] mt-0.5">
-                            {formatDateValue(currentGuestBookings[0].check_out_date)} {currentGuestBookings[0].check_out_time || ''}
+                            {formatDateValue(currentGuestBookings[0].check_out_date)} {to12h(currentGuestBookings[0].check_out_time || '')}
                           </p>
                         </div>
                       </div>
@@ -893,13 +893,13 @@ export function RoomModal({
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-surface-400">Check In</span>
                           <span className="font-semibold text-surface-700">
-                            {formatDateValue(nextReservations[0].check_in_date)} {nextReservations[0].check_in_time || ''}
+                            {formatDateValue(nextReservations[0].check_in_date)} {to12h(nextReservations[0].check_in_time || '')}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-surface-400">Check Out</span>
                           <span className="font-semibold text-surface-700">
-                            {formatDateValue(nextReservations[0].check_out_date)} {nextReservations[0].check_out_time || ''}
+                            {formatDateValue(nextReservations[0].check_out_date)} {to12h(nextReservations[0].check_out_time || '')}
                           </span>
                         </div>
                       </div>
@@ -1001,7 +1001,7 @@ export function RoomModal({
                     <div key={`room-${b.id}`} className="flex items-center justify-between py-1.5 border-b border-surface-50 text-xs">
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-surface-600 truncate">Room Charge — {(b as any).customers?.full_name || 'Guest'}</p>
-                        <p className="text-[9px] text-surface-400">{formatDateValue(b.check_in_date)} {b.check_in_time || ''} → {formatDateValue(b.check_out_date)} {b.check_out_time || ''}</p>
+                        <p className="text-[9px] text-surface-400">{formatDateValue(b.check_in_date)} {to12h(b.check_in_time || '')} → {formatDateValue(b.check_out_date)} {to12h(b.check_out_time || '')}</p>
                       </div>
                       <span className="font-semibold text-amber-600 ml-2 text-xs">{formatMoney(Number(b.total_price))}</span>
                     </div>
@@ -1124,9 +1124,9 @@ export function RoomModal({
                             <span className="text-[9px] text-surface-400 font-mono">{String(booking.id).slice(0, 8)}</span>
                           </div>
                           <div className="flex items-center gap-3 mt-1.5 text-[11px] text-surface-500">
-                            <span>{formatDateValue(booking.check_in_date)} {booking.check_in_time || ''}</span>
+                            <span>{formatDateValue(booking.check_in_date)} {to12h(booking.check_in_time || '')}</span>
                             <ArrowRightLeft className="w-3 h-3 text-surface-300" />
-                            <span>{formatDateValue(booking.check_out_date)} {booking.check_out_time || ''}</span>
+                            <span>{formatDateValue(booking.check_out_date)} {to12h(booking.check_out_time || '')}</span>
                           </div>
                           <div className="flex items-center gap-2 mt-1 text-[11px]">
                             <span className="font-semibold text-surface-600">{formatMoney(Number(booking.total_price || 0))}</span>

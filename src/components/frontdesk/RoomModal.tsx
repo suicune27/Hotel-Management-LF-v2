@@ -82,6 +82,7 @@ export function RoomModal({
   const [generatingSharingCode, setGeneratingSharingCode] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [accessCodeRevealed, setAccessCodeRevealed] = useState(false);
+  const [sharingCodeRevealed, setSharingCodeRevealed] = useState(false);
   const [accessCodePromptOpen, setAccessCodePromptOpen] = useState(false);
   const [accessCodePwdInput, setAccessCodePwdInput] = useState('');
   const [accessCodePwdVerifying, setAccessCodePwdVerifying] = useState(false);
@@ -107,7 +108,9 @@ export function RoomModal({
         password: accessCodePwdInput,
       });
       if (error) { setAccessCodePwdVerifying(false); return; }
+      // Reveal both codes on successful password
       setAccessCodeRevealed(true);
+      setSharingCodeRevealed(true);
       setAccessCodePromptOpen(false);
       setAccessCodePwdInput('');
     } catch { } finally { setAccessCodePwdVerifying(false); }
@@ -573,16 +576,31 @@ export function RoomModal({
                     <Shield className="w-3.5 h-3.5 text-surface-400" />
                     <span className="text-[11px]">Device Sharing Code:</span>
                     {sharingCode ? (
-                      <span className="font-mono font-bold text-surface-900 tracking-[0.2em] text-sm">{sharingCode}</span>
+                      sharingCodeRevealed ? (
+                        <span className="font-mono font-bold text-surface-900 tracking-[0.2em] text-sm">{sharingCode}</span>
+                      ) : (
+                        <span className="font-mono text-surface-300 tracking-widest text-sm">•••••</span>
+                      )
                     ) : (
                       <span className="text-surface-400 text-[11px]">Not set</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
                     {sharingCode ? (
-                      <button onClick={handleResetSharingCode} disabled={generatingSharingCode} className="text-[10px] text-rose-500 hover:text-rose-600 font-semibold cursor-pointer disabled:opacity-50 px-2 py-1 rounded-md hover:bg-rose-50 transition-colors">
-                        {generatingSharingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Revoke'}
-                      </button>
+                      <>
+                        {sharingCodeRevealed ? (
+                          <button onClick={() => setSharingCodeRevealed(false)} className="p-1 text-surface-400 hover:text-surface-600 cursor-pointer" title="Hide code">
+                            <EyeOff className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button onClick={handleRevealAccessCode} className="p-1 text-surface-400 hover:text-brand-600 cursor-pointer" title="Reveal sharing code (requires password)">
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button onClick={handleResetSharingCode} disabled={generatingSharingCode} className="text-[10px] text-rose-500 hover:text-rose-600 font-semibold cursor-pointer disabled:opacity-50 px-2 py-1 rounded-md hover:bg-rose-50 transition-colors">
+                          {generatingSharingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Revoke'}
+                        </button>
+                      </>
                     ) : (
                       <button onClick={handleGenerateSharingCode} disabled={generatingSharingCode} className="text-[10px] text-brand-600 hover:text-brand-700 font-semibold cursor-pointer disabled:opacity-50 px-2 py-1 rounded-md hover:bg-brand-50 transition-colors flex items-center gap-1">
                         {generatingSharingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
@@ -1298,7 +1316,18 @@ export function RoomModal({
                     </button>
                   </div>
                   {sharingCode ? (
-                    <p className="font-mono font-bold text-surface-900 text-base tracking-[0.3em]">{sharingCode}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-mono font-bold text-surface-900 text-base tracking-[0.3em]">{sharingCodeRevealed ? sharingCode : '•••••'}</p>
+                      {sharingCodeRevealed ? (
+                        <button onClick={() => setSharingCodeRevealed(false)} className="p-1 text-surface-400 hover:text-surface-600 cursor-pointer" title="Hide code">
+                          <EyeOff className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button onClick={handleRevealAccessCode} className="p-1 text-surface-400 hover:text-brand-600 cursor-pointer" title="Reveal sharing code">
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-[11px] text-surface-400">No code set</p>
                   )}

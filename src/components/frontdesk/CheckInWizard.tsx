@@ -69,13 +69,11 @@ export function CheckInWizard({ room, mode = 'checkin', booking, currencySymbol,
     if (!booking) {
       const hrs = room.min_stay_hours || 3;
       setSelectedDuration(hrs);
-      const ciOpts = (room.check_in_times || []).map(timeToMin);
       const nowM = new Date().getHours() * 60 + new Date().getMinutes();
-      const snapCiM = snapToNearest(nowM, ciOpts);
-      setCheckInTime(minToTime12(snapCiM));
+      setCheckInTime(nowTime());
       const ciDate = todayStr();
       setCheckInDate(ciDate);
-      const result = addHoursToDate(ciDate, minToTime12(snapCiM), hrs);
+      const result = addHoursToDate(ciDate, nowTime(), hrs);
       setCheckOutDate(result.date);
       setCheckOutTime(result.time);
 

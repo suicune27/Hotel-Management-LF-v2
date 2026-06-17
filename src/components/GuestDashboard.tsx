@@ -563,19 +563,25 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   useEffect(() => {
     if (!checkedInBooking) { setLiveStayDuration(''); return; }
     const calcDuration = () => {
-      const timeStr = checkedInBooking.check_in_time || '12:00 PM';
-      const [time, ampm] = timeStr.split(' ');
-      let [h, m] = time.split(':').map(Number);
-      if (ampm === 'PM' && h !== 12) h += 12;
-      if (ampm === 'AM' && h === 12) h = 0;
-      const checkInDate = new Date(checkedInBooking.check_in_date);
-      checkInDate.setHours(h, m, 0, 0);
+      const parseTime = (dateStr: string, timeStr: string) => {
+        const [t, ampm] = (timeStr || '12:00 PM').split(' ');
+        let [h, m] = t.split(':').map(Number);
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        const d = new Date(dateStr);
+        d.setHours(h, m, 0, 0);
+        return d;
+      };
       const now = new Date();
-      const diffMs = now.getTime() - checkInDate.getTime();
-      if (diffMs <= 0) { setLiveStayDuration('Just checked in'); return; }
-      const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      const checkInDate = parseTime(checkedInBooking.check_in_date, checkedInBooking.check_in_time);
+      const checkOutDate = parseTime(checkedInBooking.check_out_date, checkedInBooking.check_out_time);
+      const remainingMs = checkOutDate.getTime() - now.getTime();
+      const elapsedMs = now.getTime() - checkInDate.getTime();
+      if (elapsedMs <= 0) { setLiveStayDuration('Just checked in'); return; }
+      if (remainingMs <= 0) { setLiveStayDuration('Check-out time!'); return; }
+      const days = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const mins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
       if (days > 0) setLiveStayDuration(`${days}d ${hours}h ${mins}m`);
       else setLiveStayDuration(`${hours}h ${mins}m`);
     };
@@ -1575,7 +1581,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                             <div className="min-w-0">
                               <p className="text-[8px] sm:text-[9px] text-surface-400 font-bold uppercase tracking-wider">Stay Duration</p>
                               <p className="text-[10px] sm:text-xs font-bold text-amber-700 font-mono">{liveStayDuration || '—'}</p>
-                              <p className="text-[8px] sm:text-[9px] text-surface-400">and counting</p>
+                              <p className="text-[8px] sm:text-[9px] text-surface-400">remaining</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 px-2.5 sm:px-3.5 py-2.5 sm:py-3 bg-white/80 backdrop-blur-sm rounded-xl border border-emerald-100/80 shadow-sm">
@@ -2251,7 +2257,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                       <div className="min-w-0">
                         <p className="text-[9px] sm:text-[10px] text-surface-500 font-bold uppercase tracking-wider">Current Check-Out</p>
                         <p className="text-base sm:text-lg font-bold text-surface-900 truncate">{checkedInBooking?.check_out_date} at {checkedInBooking?.check_out_time}</p>
-                        <p className="text-[9px] sm:text-[10px] text-surface-400">You've been here {liveStayDuration || '—'} so far</p>
+                        <p className="text-[9px] sm:text-[10px] text-surface-400">{liveStayDuration ? `${liveStayDuration} remaining` : '—'}</p>
                       </div>
                     </div>
                   </div>

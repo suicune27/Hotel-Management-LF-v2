@@ -9,6 +9,7 @@ import { CallService } from '../lib/callService';
 import { getCallClient } from '../lib/callServerClient';
 import { combineDateAndTime } from '../lib/booking-utils';
 import type { Call } from '../types';
+import { AudioVisualizer } from './AudioVisualizer';
 import { 
   Building, Calendar, User, LogOut, Home, Loader2, CalendarDays,
   UtensilsCrossed, MessageSquareText, Clock, Plus, Minus,
@@ -86,6 +87,7 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const [guestIsMuted, setGuestIsMuted] = useState(false);
   const guestCallServiceRef = useRef<CallService | null>(null);
   const guestAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [guestRemoteStream, setGuestRemoteStream] = useState<MediaStream | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const manualHangupRef = useRef(false);
   const callViaWsRef = useRef(false);
@@ -613,21 +615,27 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   // Connect remote audio stream to audio element when call connects
   // Polls every 200ms for remoteStream (ontrack fires asynchronously after WebRTC negotiates)
   useEffect(() => {
-    if (guestCallStatus !== 'connected') return;
+    if (guestCallStatus !== 'connected') {
+      setGuestRemoteStream(null);
+      return;
+    }
     const el = guestAudioRef.current;
     console.log('[GuestAudio] Starting poll for remoteStream, el:', !!el, 'ref:', !!guestCallServiceRef.current);
     const check = setInterval(() => {
       const svc = guestCallServiceRef.current;
       const stream = svc?.remoteStream;
       console.log('[GuestAudio] Polling stream:', !!stream, 'tracks:', stream?.getAudioTracks().length, 'el:', !!el);
-      if (stream && el && el.srcObject !== stream) {
-        console.log('[GuestAudio] CONNECTING remote stream to audio element!');
-        console.log('[GuestAudio] Audio tracks in stream:', stream.getAudioTracks().map(t => `${t.label}:${t.enabled}:${t.readyState}`));
-        el.srcObject = stream;
-        el.volume = 1;
-        el.muted = false;
-        el.play().then(() => console.log('[GuestAudio] Audio play() SUCCESS')).catch((err) => console.log('[GuestAudio] Audio play() FAILED:', err));
-        clearInterval(check);
+      if (stream) {
+        setGuestRemoteStream(stream);
+        if (el && el.srcObject !== stream) {
+          console.log('[GuestAudio] CONNECTING remote stream to audio element!');
+          console.log('[GuestAudio] Audio tracks in stream:', stream.getAudioTracks().map(t => `${t.label}:${t.enabled}:${t.readyState}`));
+          el.srcObject = stream;
+          el.volume = 1;
+          el.muted = false;
+          el.play().then(() => console.log('[GuestAudio] Audio play() SUCCESS')).catch((err) => console.log('[GuestAudio] Audio play() FAILED:', err));
+          clearInterval(check);
+        }
       }
       
     }, 200);
@@ -2889,6 +2897,9 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
                 {guestCallStatus === 'ended' ? <X className="w-4 h-4" /> : <PhoneOff className="w-4 h-4" />}
               </button>
             </div>
+            {guestCallStatus === 'connected' && (
+              <AudioVisualizer stream={guestRemoteStream} isActive={guestCallStatus === 'connected'} />
+            )}
             {/* Audio output selector */}
             {guestCallStatus === 'connected' && guestAudioOutputDevices.length > 0 && (
               <select

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import type { Call } from '../../types';
 import { getCallClient, type CallServerClient, type ClientRole } from '../../lib/callServerClient';
 import type { CallSignal } from '../../lib/callService';
+import { AudioVisualizer } from '../AudioVisualizer';
 
 interface MediaDeviceInfo {
   deviceId: string;
@@ -38,6 +39,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const [wsServerUrl, setWsServerUrl] = useState('');
   const [showWsConfig, setShowWsConfig] = useState(false);
   const turnServersRef = useRef<IceServerConfig[]>([]);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const wsClientRef = useRef<CallServerClient | null>(null);
 
   // Load TURN server config from hotel_settings
@@ -192,17 +194,23 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   }, [activeCall?.status, activeCall?.start_time]);
 
   useEffect(() => {
-    if (activeCall?.status !== 'connected') return;
+    if (activeCall?.status !== 'connected') {
+      setRemoteStream(null);
+      return;
+    }
     const el = audioRef.current;
     const check = setInterval(() => {
       const stream = callSvc.current?.remoteStream;
-      if (stream && el && el.srcObject !== stream) {
-        console.log('[CallPanel] Connecting remote stream to audio element!');
-        el.srcObject = stream;
-        el.volume = 1;
-        el.muted = false;
-        el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
-        clearInterval(check);
+      if (stream) {
+        setRemoteStream(stream);
+        if (el && el.srcObject !== stream) {
+          console.log('[CallPanel] Connecting remote stream to audio element!');
+          el.srcObject = stream;
+          el.volume = 1;
+          el.muted = false;
+          el.play().then(() => console.log('[CallPanel] Audio play SUCCESS')).catch((err) => console.log('[CallPanel] Audio play FAILED:', err));
+          clearInterval(check);
+        }
       }
     }, 200);
     return () => clearInterval(check);
@@ -534,6 +542,7 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
                 <button onClick={handleHold} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer ${isOnHold ? 'bg-amber-100 text-amber-600' : 'bg-white text-surface-600 hover:bg-surface-50'}`}>{isOnHold ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}</button>
                 <button onClick={handleEndCall} className="w-10 h-10 rounded-full bg-rose-600 text-white flex items-center justify-center hover:bg-rose-700 transition-colors cursor-pointer"><PhoneOff className="w-4 h-4" /></button>
               </div>
+              <AudioVisualizer stream={remoteStream} isActive={activeCall?.status === 'connected'} />
               {/* Audio output device selector */}
               <div className="relative">
                 <button

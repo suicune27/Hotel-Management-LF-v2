@@ -861,6 +861,16 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
   const callFrontDesk = async () => {
     console.log('[GuestCall] callFrontDesk started');
     if (!checkedInBooking || !effectiveProfile) { console.log('[GuestCall] no booking or profile'); return; }
+
+    // Prime the audio element within the user gesture thread to bypass mobile/Safari autoplay policies
+    const audioEl = guestAudioRef.current;
+    if (audioEl) {
+      console.log('[GuestCall] Priming audio element during user gesture');
+      audioEl.play().catch((err) => {
+        console.log('[GuestCall] Audio prime registration/gesture registered:', err.name || err);
+      });
+    }
+
     setGuestCallStatus('calling');
     try {
       const turnServers = await CallService.loadTurnConfig();

@@ -7,13 +7,33 @@ export interface IceServerConfig {
   credential?: string;
 }
 
-const DEFAULT_ICE_SERVERS: IceServerConfig[] = [
+const envStunUrl = (import.meta as any).env?.VITE_ICE_STUN_URL;
+const envTurnUrl = (import.meta as any).env?.VITE_ICE_TURN_URL;
+const envTurnUsername = (import.meta as any).env?.VITE_ICE_TURN_USERNAME;
+const envTurnCredential = (import.meta as any).env?.VITE_ICE_TURN_CREDENTIAL;
+
+const DEFAULT_ICE_SERVERS: IceServerConfig[] = [];
+
+if (envStunUrl) {
+  DEFAULT_ICE_SERVERS.push({ urls: envStunUrl });
+}
+if (envTurnUrl) {
+  DEFAULT_ICE_SERVERS.push({
+    urls: envTurnUrl,
+    username: envTurnUsername,
+    credential: envTurnCredential,
+  });
+}
+
+// Fallback to standard Google stun servers to ensure maximum success across all networks
+DEFAULT_ICE_SERVERS.push(
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-];
+  { urls: 'stun:stun4.l.google.com:19302' }
+);
+
 
 export type CallSignalType = 'offer' | 'answer' | 'ice-candidate' | 'declined' | 'ended';
 
@@ -110,12 +130,15 @@ export class CallService {
       this.log('WARN: No local stream to add to PC');
     }
     this.pc.ontrack = (e) => {
-      const stream = e.streams?.[0] || new MediaStream();
+      let stream = this.remoteStream;
+      if (!stream) {
+        stream = e.streams?.[0] || new MediaStream();
+      }
       if (e.track && !stream.getTracks().some((t) => t.id === e.track!.id)) {
         stream.addTrack(e.track);
       }
       this.remoteStream = stream;
-      this.log('ontrack FIRED! streams:', e.streams.length, 'track kind:', e.track?.kind, 'remoteStreamTracks:', this.remoteStream.getTracks().length);
+      this.log('ontrack FIRED! streams:', e.streams?.length || 0, 'track kind:', e.track?.kind, 'remoteStreamTracks:', this.remoteStream.getTracks().length);
     };
     this.pc.onicecandidate = (e) => {
       if (e.candidate && this.currentCallId) {
@@ -279,6 +302,25 @@ export class CallService {
   }
 
   static async loadTurnConfig(): Promise<IceServerConfig[]> {
+    // Dynamic environment configuration first (allows fast deployment/local environments to override database settings)
+    const envStunUrl = (import.meta as any).env?.VITE_ICE_STUN_URL;
+    const envTurnUrl = (import.meta as any).env?.VITE_ICE_TURN_URL;
+    if (envStunUrl || envTurnUrl) {
+      const envServers: IceServerConfig[] = [];
+      if (envStunUrl) {
+        envServers.push({ urls: envStunUrl });
+      }
+      if (envTurnUrl) {
+        envServers.push({
+          urls: envTurnUrl,
+          username: (import.meta as any).env?.VITE_ICE_TURN_USERNAME,
+          credential: (import.meta as any).env?.VITE_ICE_TURN_CREDENTIAL,
+        });
+      }
+      console.log('[CallService] loaded STUN/TURN configuration from environment overrides:', envServers);
+      return envServers;
+    }
+
     try {
       const { data } = await supabase
         .from('hotel_settings')
@@ -286,12 +328,13 @@ export class CallService {
         .eq('key', 'turn_servers')
         .maybeSingle();
       if (data?.value && Array.isArray(data.value) && data.value.length > 0) {
-        console.log('[CallService] Loaded TURN config:', data.value.length, 'servers');
+        console.log('[CallService] Loaded TURN config from database settings:', data.value.length, 'servers');
         return data.value as IceServerConfig[];
       }
     } catch (err) {
-      console.error('[CallService] Failed to load TURN config:', err);
+      console.error('[CallService] Failed to load TURN config from database:', err);
     }
+
     return [];
   }
 

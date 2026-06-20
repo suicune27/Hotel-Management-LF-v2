@@ -39,13 +39,16 @@ export class CallServerClient {
   private events: CallServerEvents = {};
 
   constructor(serverUrl?: string) {
-    // Default: connect to the front desk machine's IP on port 3001
     this.url = serverUrl || this.getDefaultUrl();
   }
 
   private getDefaultUrl(): string {
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    if (isHttps) {
+      return `wss://${window.location.host}`;
+    }
     // Try localhost first (front desk running on this machine)
-    const hostname = window.location.hostname;
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     // If on a guest device, they'll need to enter the front desk IP
     return `ws://${hostname}:3001`;
   }

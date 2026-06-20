@@ -81,7 +81,12 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
 
   // Connect to WebSocket signaling server
   useEffect(() => {
-    const savedUrl = localStorage.getItem('call_server_url') || `ws://${window.location.hostname}:3001`;
+    const isHttps = window.location.protocol === 'https:';
+    const defaultUrl = isHttps 
+      ? `wss://${window.location.host}` 
+      : `ws://${window.location.hostname}:3001`;
+      
+    const savedUrl = localStorage.getItem('call_server_url') || defaultUrl;
     setWsServerUrl(savedUrl);
 
     const client = getCallClient(savedUrl);
@@ -224,6 +229,16 @@ export function CallPanel({ userProfileId, userProfileName, userRole }: CallPane
   const handleAccept = useCallback(async () => {
     if (!incomingCall) return;
     setCallError(null);
+
+    // Prime the audio element within the user gesture thread to bypass Safari/Chrome autoplay policies
+    const audioEl = audioRef.current;
+    if (audioEl) {
+      console.log('[CallPanel] Priming audio element during user gesture');
+      audioEl.play().catch((err) => {
+        console.log('[CallPanel] Audio prime registration/gesture registered:', err.name || err);
+      });
+    }
+
     try {
       const svc = getCallService();
       const micOk = await svc.requestMicrophone();

@@ -904,31 +904,36 @@ export default function GuestDashboard({ onNavigate, userSession, userProfile, o
           wsClient.on({
             onCallAccepted: (acceptCallId) => {
               clearTimeout(timeout);
+              
+              // Set up signal transport BEFORE creating the offer, so ICE candidate gathering works instantly
+              svc.setSignalTransport(
+                (signal) => {
+                  if (signal.type === 'answer') {
+                    svc.handleAnswer(signal.data).then(() => {
+                      setGuestCallStatus('connected');
+                      const start = Date.now();
+                      if (callTimerRef.current) clearInterval(callTimerRef.current);
+                      callTimerRef.current = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
+                    }).catch((err) => console.error('[GuestCall] handleAnswer error:', err));
+                  } else if (signal.type === 'ice-candidate') {
+                    svc.queueIceCandidate(signal.data);
+                  } else if (signal.type === 'ended') {
+                    svc.endCall();
+                    setGuestCallStatus('ended');
+                    if (callTimerRef.current) clearInterval(callTimerRef.current);
+                  }
+                },
+                (type, data) => {
+                  if (type === 'ice-candidate') {
+                    wsClient.sendSignal(acceptCallId, { type: 'ice-candidate', data });
+                  }
+                },
+                acceptCallId
+              );
+
               svc.createOffer().then((offer) => {
                 if (offer) {
                   wsClient.sendSignal(acceptCallId, { type: 'offer', data: offer });
-
-                  svc.setSignalTransport(
-                    (signal) => {
-                      if (signal.type === 'answer') {
-                        svc.handleAnswer(signal.data).then(() => {
-                          setGuestCallStatus('connected');
-                          const start = Date.now();
-                          if (callTimerRef.current) clearInterval(callTimerRef.current);
-                          callTimerRef.current = setInterval(() => setGuestCallDuration(Math.floor((Date.now() - start) / 1000)), 1000);
-                        }).catch((err) => console.error('[GuestCall] handleAnswer error:', err));
-                      } else if (signal.type === 'ice-candidate') {
-                        svc.queueIceCandidate(signal.data);
-                      } else if (signal.type === 'ended') {
-                        svc.endCall();
-                        setGuestCallStatus('ended');
-                        if (callTimerRef.current) clearInterval(callTimerRef.current);
-                      }
-                    },
-                    (type, data) => {
-                      if (type === 'ice-candidate') wsClient.sendSignal(acceptCallId, { type: 'ice-candidate', data });
-                    }
-                  );
                 }
               });
             },

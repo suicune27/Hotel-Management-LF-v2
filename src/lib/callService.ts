@@ -109,9 +109,13 @@ export class CallService {
   setSignalTransport(
     onSignal: (signal: CallSignal) => void,
     sendSignal: (type: CallSignalType, data?: any) => void,
+    callId?: string,
   ) {
     this.signalHandler = onSignal;
     this.signalBroadcaster = sendSignal;
+    if (callId) {
+      this.currentCallId = callId;
+    }
   }
 
   /** Dispatch an incoming signal to the handler */
@@ -141,12 +145,12 @@ export class CallService {
       this.log('ontrack FIRED! streams:', e.streams?.length || 0, 'track kind:', e.track?.kind, 'remoteStreamTracks:', this.remoteStream.getTracks().length);
     };
     this.pc.onicecandidate = (e) => {
-      if (e.candidate && this.currentCallId) {
+      if (e.candidate) {
         this.log('Sending ICE candidate:', e.candidate.type, e.candidate.candidate.slice(0, 60));
         // Use custom signal broadcaster if set (WebSocket), otherwise fall back to Supabase broadcast
         if (this.signalBroadcaster) {
           this.signalBroadcaster('ice-candidate', e.candidate.toJSON());
-        } else {
+        } else if (this.currentCallId) {
           this.signalChannel?.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
         }
       }

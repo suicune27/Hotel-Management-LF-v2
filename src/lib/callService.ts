@@ -57,6 +57,9 @@ export class CallService {
   private iceServers: IceServerConfig[];
   private signalHandler: ((signal: CallSignal) => void) | null = null;
   private signalBroadcaster: ((type: CallSignalType, data?: any) => void) | null = null;
+  private signalChannelSubscribed = false;
+  private outgoingCandidateBuffer: any[] = [];
+  private outgoingSignalsBuffer: { type: CallSignalType; data?: any }[] = [];
 
   constructor(iceServers?: IceServerConfig[]) {
     this.iceServers = iceServers && iceServers.length > 0 ? iceServers : DEFAULT_ICE_SERVERS;
@@ -151,7 +154,12 @@ export class CallService {
         if (this.signalBroadcaster) {
           this.signalBroadcaster('ice-candidate', e.candidate.toJSON());
         } else if (this.currentCallId) {
-          this.signalChannel?.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
+          if (this.signalChannel && this.signalChannelSubscribed) {
+            this.signalChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'ice-candidate', call_id: this.currentCallId, from: '', to: '', data: e.candidate.toJSON() } });
+          } else {
+            this.log('Buffered outgoing ICE candidate (channel not subscribed yet):', e.candidate.type);
+            this.outgoingCandidateBuffer.push(e.candidate.toJSON());
+          }
         }
       }
     };
@@ -176,6 +184,10 @@ export class CallService {
 
   subscribeToSignaling(callId: string, userId: string, onSignal: (s: CallSignal) => void) {
     this.currentCallId = callId;
+    this.signalChannelSubscribed = false;
+    this.outgoingCandidateBuffer = [];
+    this.outgoingSignalsBuffer = [];
+
     // If a custom signal transport is set (WebSocket), skip Supabase broadcast channels.
     // Signal dispatching is handled externally via dispatchSignal().
     if (this.signalHandler) {
@@ -183,8 +195,43 @@ export class CallService {
     }
     this.signalChannel = supabase.channel(`call:${callId}`);
     this.signalChannel.on('broadcast', { event: 'signal' }, (p) => onSignal(p.payload as CallSignal));
-    this.signalChannel.subscribe();
-    return () => { this.signalChannel?.unsubscribe(); this.signalChannel = null; };
+    this.signalChannel.subscribe((status) => {
+      this.log('Signal channel status changed:', status);
+      if (status === 'SUBSCRIBED') {
+        this.signalChannelSubscribed = true;
+        
+        // 1. Flush buffered signals
+        if (this.outgoingSignalsBuffer.length > 0) {
+          this.log('Flushing', this.outgoingSignalsBuffer.length, 'buffered outgoing signals');
+          this.outgoingSignalsBuffer.forEach((sig) => {
+            this.signalChannel?.send({
+              type: 'broadcast',
+              event: 'signal',
+              payload: { type: sig.type, call_id: this.currentCallId!, from: '', to: '', data: sig.data }
+            });
+          });
+          this.outgoingSignalsBuffer = [];
+        }
+
+        // 2. Flush buffered candidates
+        if (this.outgoingCandidateBuffer.length > 0) {
+          this.log('Flushing', this.outgoingCandidateBuffer.length, 'buffered outgoing ICE candidates');
+          this.outgoingCandidateBuffer.forEach((candidate) => {
+            this.signalChannel?.send({
+              type: 'broadcast',
+              event: 'signal',
+              payload: { type: 'ice-candidate', call_id: this.currentCallId!, from: '', to: '', data: candidate }
+            });
+          });
+          this.outgoingCandidateBuffer = [];
+        }
+      }
+    });
+    return () => {
+      this.signalChannel?.unsubscribe();
+      this.signalChannel = null;
+      this.signalChannelSubscribed = false;
+    };
   }
 
   async createOffer() {
@@ -253,6 +300,9 @@ export class CallService {
     this.currentCallId = null;
     this.pendingCandidates = [];
     this.remoteDescSet = false;
+    this.signalChannelSubscribed = false;
+    this.outgoingCandidateBuffer = [];
+    this.outgoingSignalsBuffer = [];
   }
 
   toggleMute(): boolean {
@@ -272,14 +322,15 @@ export class CallService {
     // Use custom signal broadcaster if set (WebSocket), otherwise fall back to Supabase broadcast
     if (this.signalBroadcaster) {
       this.signalBroadcaster(type, data);
-    } else if (this.signalChannel) {
+    } else if (this.signalChannel && this.signalChannelSubscribed) {
       this.signalChannel.send({
         type: 'broadcast',
         event: 'signal',
         payload: { type, call_id: this.currentCallId, from: '', to: '', data }
       });
     } else {
-      this.log('broadcastSignal FAILED: no signal channel or broadcaster');
+      this.log('Buffered outgoing signal (channel not subscribed yet):', type);
+      this.outgoingSignalsBuffer.push({ type, data });
     }
   }
 
